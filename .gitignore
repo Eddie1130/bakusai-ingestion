@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Scraped data and runtime state / 爬取資料與執行狀態
+# Never commit either. The data tree holds real forum content about real
+# people; the runtime tree is reproducible and worth nothing in git.
+/data/
+/var/
+*.db
+*.sqlite3
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.coverage

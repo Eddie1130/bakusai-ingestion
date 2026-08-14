@@ -1,0 +1,19 @@
+# Runtime dependencies / 執行時相依套件
+#
+# Only what the code actually imports. There is no database driver and no model
+# client here by design: this tool writes files and prints prompts, and reads no
+# credential of any kind.
+#
+# 只列出程式真正 import 的套件。本工具不連資料庫、不呼叫模型，因此不需要任何憑證。
+
+beautifulsoup4==4.15.0
+requests==2.34.2
+tqdm==4.70.0
+
+# The grammar filter's dictionary. Optional at runtime by design — without it
+# `analysis/morphology.py` drops nothing and the selection is merely wider — but
+# pinned here because a filter that silently stops filtering is worse than one
+# that is simply absent.
+# 文法過濾器所需的字典。缺少時不會壞，只會少過濾。
+sudachipy==0.6.11
+sudachidict-core==20260723
