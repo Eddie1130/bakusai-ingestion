@@ -62,6 +62,13 @@ groups the threads it finds into candidate stores, and shows you the plan — ho
 many threads, how many pages, how long it will take — before it spends a single
 request. Nothing is fetched until you agree.
 
+啟動後可選 `1=抓取店家`（預設）或 `2=更新已抓店家`。
+更新模式會列出本機已抓取的店家（含地區），選擇編號即可搜尋新增討論串與最新留言，
+並在抓取前顯示計畫；按 Enter 開始、`v` 檢視明細、`q` 取消。
+更新採最近 24 個月的抓取範圍，保留原有歷史資料與留言 ID，合併新資料並避免重複。
+沒有新留言的討論串會跳過；若找不到符合所選店家身分的搜尋結果，會回報失敗，
+不會自動改抓其他同名店。
+
 Re-scrape a store already on disk, unattended:
 
 ```bash

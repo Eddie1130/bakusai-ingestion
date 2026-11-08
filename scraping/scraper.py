@@ -472,20 +472,26 @@ def resolve_target(acode: int, target: StoreTarget, fetch: client.Fetch) -> Stor
     return StoreTarget(name=remainder, search_names=(remainder,), district=district)
 
 
-def stored_anchors(acode: int) -> dict[frozenset[str], str]:
-    """Every store already scraped in this region, by the identity it was scraped under.
+def stored_threads(acode: int) -> dict[str, frozenset[str]]:
+    """Local store identities from stable thread IDs, independent of search words.
 
-    Read from `info.json` rather than the comments file, which reaches 19 MB — a
-    re-run must not have to open every store in a region to find out which directory
-    holds the one it is about to scrape.
+    Anchor tokens such as 飛田新地 describe the area shared by several stores.
+    They cannot identify a directory across searches for different store names.
     """
-    found: dict[frozenset[str], str] = {}
+    found = {}
     for name in paths.store_names(acode):
-        info = store.load(paths.info_path(acode, name))
-        recorded = (info or {}).get("store_anchor")
-        if recorded:
-            found[frozenset(recorded)] = name
+        payload = store.load(paths.bakusai_path(acode, name)) or {}
+        found[name] = frozenset(
+            str(thread["tid"]) for thread in payload.get("threads", []) if thread.get("tid")
+        )
     return found
+
+
+def matching_stores(
+    candidate: StoreCandidate, known: dict[str, frozenset[str]],
+) -> tuple[str, ...]:
+    tids = {ref.tid for ref in candidate.threads}
+    return tuple(name for name, saved in known.items() if saved & tids)
 
 
 def resolve_candidate(
@@ -493,28 +499,41 @@ def resolve_candidate(
     grouping: Grouping,
     target: StoreTarget,
     select: SelectCandidate | None = None,
+    existing_store: str | None = None,
+    known_stores: dict[str, frozenset[str]] | None = None,
 ) -> StoreCandidate | None:
     """Which of the stores the search found is the one being scraped.
 
     The operator is asked only when nothing else settles it, in this order:
 
-    1. **A store already scraped in this region.** Its identity was recorded the first
-       time, so a re-run is unattended even when a same-named store has opened since.
-    2. **The district the operator typed.** `渋谷 マテリアル` says which one already.
+    1. **An explicitly selected local store**, identified by its saved thread IDs.
+    2. **The district the operator typed**, then a store whose thread IDs are cached.
     3. **There being only one.** The ordinary case, and it costs no keystroke.
     """
     if not grouping.candidates:
         return None
 
-    known = stored_anchors(acode)
-    remembered = [c for c in grouping.candidates if c.key in known]
-    if len(remembered) == 1:
-        return remembered[0]
+    if existing_store is not None:
+        # Updating a chosen local store must never fall through to another
+        # same-named candidate, even if it is the only search result today.
+        payload = store.load(paths.bakusai_path(acode, existing_store)) or {}
+        tids = {str(thread["tid"]) for thread in payload.get("threads", []) if thread.get("tid")}
+        matching = [c for c in grouping.candidates
+                    if any(ref.tid in tids for ref in c.threads)]
+        # Anchor tokens depend on the original search words; stable thread IDs
+        # still identify the store when updating with its saved full name.
+        return matching[0] if len(matching) == 1 else None
+
+    known = stored_threads(acode) if known_stores is None else known_stores
 
     if target.district:
         answering = grouping.answering_to(target.district)
         if len(answering) == 1:
             return answering[0]
+
+    remembered = [c for c in grouping.candidates if matching_stores(c, known)]
+    if len(remembered) == 1:
+        return remembered[0]
 
     if len(grouping.candidates) == 1:
         return grouping.candidates[0]
@@ -533,6 +552,7 @@ def scrape_store(
     select_candidate: SelectCandidate | None = None,
     on_size: ConfirmSize | None = None,
     on_plan: ConfirmPlan | None = None,
+    existing_store: str | None = None,
 ) -> Path | None:
     """Scrape one store into its cached file. Returns the path, or `None` if not found."""
     fetch = fetch or client.create_fetch()
@@ -545,13 +565,19 @@ def scrape_store(
         return None
 
     grouping = group_candidates(hits, target)
-    chosen = resolve_candidate(acode, grouping, target, select_candidate)
+    known_stores = stored_threads(acode) if existing_store is None else {}
+    chosen = resolve_candidate(
+        acode, grouping, target, select_candidate, existing_store, known_stores,
+    )
     if chosen is None or not chosen.threads:
         return None
 
     # A store that renames itself keeps writing where its history already is. Its
     # directory is only named on the first scrape; afterwards it is found by identity.
-    name = stored_anchors(acode).get(chosen.key, chosen.name)
+    matching = matching_stores(chosen, known_stores)
+    if len(matching) > 1:
+        raise client.ScrapeError("相同討論串存在於多個本機店家，無法確認應更新哪份資料")
+    name = existing_store or (matching[0] if matching else chosen.name)
     path = paths.bakusai_path(acode, name)
     info = paths.info_path(acode, name)
     existing = store.load(path)

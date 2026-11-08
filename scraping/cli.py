@@ -9,7 +9,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
-from . import client, failures, parser, store
+from . import client, failures, parser, refresh, store, stores
 from .lock import ScrapeInProgress, scrape_lock
 from .parser import ThreadRef
 from .progress import ScrapeProgress, describe_wait
@@ -368,11 +368,18 @@ def _scrape_holding_lock(
 def main(ask: Ask = input) -> int:
     """Run the interactive loop until the operator quits.
 
-    Three questions and a plan: which region, which store, how far back — then the
-    whole run stated before any of it is spent.
+    Choose a new scrape or update a store already on disk, then show the plan.
     """
     print("爆サイ 店家留言抓取工具")
     while True:
+        mode = prompt_mode(ask)
+        if mode is None:
+            break
+        if mode == "update":
+            target_store = prompt_update_store(stores.scraped(), ask)
+            if target_store is not None:
+                print(update_once(target_store, ask=ask))
+            continue
         acode = prompt_area(ask)
         if acode is None:
             break
@@ -382,6 +389,49 @@ def main(ask: Ask = input) -> int:
         print(scrape_once(acode, target, full=prompt_full_history(ask), ask=ask))
     print("結束")
     return 0
+
+
+def prompt_mode(ask: Ask = input) -> str | None:
+    while True:
+        raw = ask("請選擇模式（Enter=1 抓取店家；2=更新已抓店家），q 離開：").strip().lower()
+        if raw in QUIT_COMMANDS:
+            return None
+        if raw in {"", "1", "2"}:
+            return "update" if raw == "2" else "scrape"
+        print("  模式無效，請重新輸入")
+
+
+def prompt_update_store(
+    options: Sequence[stores.ScrapedStore], ask: Ask = input,
+) -> stores.ScrapedStore | None:
+    """Choose a specific local store, including its region, without a search."""
+    if not options:
+        print("  尚未抓取任何店家，請先使用抓取模式")
+        return None
+    for position, option in enumerate(options, start=1):
+        print(f"  [{position}] {option.label}")
+    while True:
+        raw = ask(f"請選擇要更新的店家（1-{len(options)}），q 返回：").strip()
+        if raw.lower() in QUIT_COMMANDS:
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= len(options):
+            return options[int(raw) - 1]
+        print("  編號無效，請重新輸入")
+
+
+def update_once(
+    target: stores.ScrapedStore, ask: Ask = input,
+    fetch: client.Fetch | None = None,
+) -> str:
+    """Search for new threads and incrementally merge the chosen store's data."""
+    print(f"  更新「{target.label}」：搜尋最新討論串與留言，保留原有歷史資料。")
+    print(f"  新抓取範圍為最近 {DEFAULT_CUTOFF_MONTHS} 個月，已快取留言不會重複加入。")
+    with ScrapeProgress() as report:
+        outcome = refresh.attempt(
+            target, report, fetch=fetch,
+            on_plan=lambda plan: confirm_plan(plan, ask),
+        )
+    return outcome.message
 
 
 if __name__ == "__main__":

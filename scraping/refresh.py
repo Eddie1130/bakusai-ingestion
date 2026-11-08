@@ -25,7 +25,7 @@ import paths
 from . import client, failures, progress, store as store_file, stores
 from .candidates import StoreTarget
 from .lock import ScrapeInProgress, scrape_lock
-from .scraper import DEFAULT_CUTOFF_MONTHS, SearchCancelled, scrape_store
+from .scraper import DEFAULT_CUTOFF_MONTHS, ConfirmPlan, SearchCancelled, scrape_store
 
 #: Another process — a terminal, another job — is scraping. Two scrapers 2.0 s
 #: apart are one scraper at 1.0 s, which is past the measured block cliff.
@@ -72,6 +72,7 @@ def attempt(
     fetch: client.Fetch | None = None,
     cutoff_months: int = DEFAULT_CUTOFF_MONTHS,
     now: datetime | None = None,
+    on_plan: ConfirmPlan | None = None,
 ) -> Outcome:
     """Re-scrape one store, turning every way it can fail into an outcome.
 
@@ -88,6 +89,8 @@ def attempt(
                 cutoff_months=cutoff_months,
                 now=now,
                 on_progress=report,
+                existing_store=target.name,
+                on_plan=on_plan,
                 # No menu and no exclusion report: an unattended run has nobody to
                 # ask, and a re-run never needs to. `on_size` is not a question
                 # here either — it is the only checkpoint the search phase offers,
