@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="workspace-token" content="__WORKSPACE_TOKEN__" />
+    <meta name="color-scheme" content="light" />
+    <title>Bakusai · 留言研究工作台</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要內容</a>
+    <aside class="sidebar" aria-label="店家資料庫">
+      <a class="brand" href="/" aria-label="Bakusai 工作台首頁"
+        ><span class="brand-mark">b<span>·</span></span
+        ><span
+          >bakusai<span class="brand-caption">留言研究工作台</span></span
+        ></a
+      >
+      <button class="button primary add-store" id="add-store">
+        <span aria-hidden="true">＋</span> 新增店家
+      </button>
+      <div class="sidebar-heading">
+        <span>我的店家</span><span id="store-count" class="count">0</span>
+      </div>
+      <label class="sr-only" for="region">依地區篩選</label>
+      <select id="region">
+        <option value="all">全部地區</option>
+      </select>
+      <label class="search-field"
+        ><span aria-hidden="true">⌕</span
+        ><input
+          id="store-search"
+          placeholder="搜尋已儲存店家"
+          aria-label="搜尋已儲存店家"
+          type="search"
+      /></label>
+      <div id="stores" class="store-list" aria-live="polite">
+        <p class="muted small">正在讀取店家…</p>
+      </div>
+      <div class="sidebar-footer">
+        <span class="local-dot" aria-hidden="true"></span
+        ><span>本機工作空間<small>資料只留在這台電腦</small></span
+        ><button id="help" class="icon-button" aria-label="使用說明">?</button>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <span
+          >資料庫 <span class="divider">/</span>
+          <span id="breadcrumb">開始使用</span></span
+        ><button id="job-indicator" class="job-indicator" hidden>
+          查看抓取進度</button
+        ><span class="private-label"
+          ><span class="local-dot" aria-hidden="true"></span>僅供個人研究</span
+        >
+      </header>
+      <div
+        id="connection-banner"
+        class="connection-banner"
+        role="status"
+        hidden
+      >
+        無法連線至本機程式。請確認工作台仍在執行，連線恢復後會自動重試。
+      </div>
+      <main id="main" tabindex="-1">
+        <section id="welcome" class="welcome" hidden>
+          <div class="eyebrow">從討論，到有依據的理解</div>
+          <div class="welcome-symbol" aria-hidden="true">読<span>·</span></div>
+          <h1>把線索整理好，<br />讓閱讀更有方向。</h1>
+          <p>
+            收集店家討論、整理分析提示詞，<br />再回到原文，核對每一個引用。
+          </p>
+          <button id="welcome-add" class="button primary">
+            新增第一家店 <span aria-hidden="true">↗</span>
+          </button>
+          <div class="welcome-steps">
+            <div>
+              <span>01</span><strong>收集討論</strong>
+              <p>選擇店家，確認計畫後抓取。</p>
+            </div>
+            <div>
+              <span>02</span><strong>整理線索</strong>
+              <p>產生提示詞，交給你慣用的模型。</p>
+            </div>
+            <div>
+              <span>03</span><strong>核對證據</strong>
+              <p>貼回報告，逐一查看引用原文。</p>
+            </div>
+          </div>
+        </section>
+        <section id="store-workspace" hidden>
+          <div class="store-header">
+            <div>
+              <div class="eyebrow" id="store-region"></div>
+              <h1 id="store-title"></h1>
+              <p id="store-updated" class="muted small"></p>
+            </div>
+            <button id="refresh-store" class="button secondary">
+              <span aria-hidden="true">↻</span> 更新資料
+            </button>
+          </div>
+          <div id="store-warning" class="notice warning" hidden></div>
+          <div class="stats">
+            <div><span>已收集留言</span><strong id="stat-count">—</strong></div>
+            <div>
+              <span>留言日期範圍</span
+              ><strong id="stat-span" class="date-stat">—</strong>
+            </div>
+            <div class="stat-aside">
+              <span class="mini-mark" aria-hidden="true">↳</span
+              ><span>讓每一個結論<br />都有原文可循</span>
+            </div>
+          </div>
+          <nav class="tabs" aria-label="工作區">
+            <button class="tab active" data-tab="analysis" aria-current="page">
+              分析提示詞</button
+            ><button class="tab" data-tab="verify">報告與引用</button
+            ><button class="tab" data-tab="browse">留言瀏覽</button>
+          </nav>
+          <section id="analysis-panel" class="tab-panel">
+            <div class="section-heading">
+              <div>
+                <h2>今天想了解什麼？</h2>
+                <p>選一個方向，我們幫你準備好分析資料。</p>
+              </div>
+              <span class="step-label">01 / 準備提示詞</span>
+            </div>
+            <form id="analysis-form">
+              <fieldset class="mode-grid">
+                <legend class="sr-only">分析方式</legend>
+                <label class="mode-card"
+                  ><input type="radio" name="mode" value="name" checked /><span
+                    class="mode-icon"
+                    aria-hidden="true"
+                    >◎</span
+                  ><strong>已知名字</strong><span>集中整理某位女生的討論</span
+                  ><span class="radio-mark" aria-hidden="true"></span
+                ></label>
+                <label class="mode-card"
+                  ><input type="radio" name="mode" value="features" /><span
+                    class="mode-icon"
+                    aria-hidden="true"
+                    >⌕</span
+                  ><strong>特徵尋人</strong><span>依外貌、服裝或特點找線索</span
+                  ><span class="radio-mark" aria-hidden="true"></span
+                ></label>
+                <label class="mode-card"
+                  ><input type="radio" name="mode" value="roster" /><span
+                    class="mode-icon"
+                    aria-hidden="true"
+                    >▤</span
+                  ><strong>全店女生整理</strong
+                  ><span>整理人物、別名與相關討論</span
+                  ><span class="radio-mark" aria-hidden="true"></span
+                ></label>
+              </fieldset>
+              <div class="form-surface">
+                <div id="target-field" class="field">
+                  <label for="target" id="target-label"
+                    >女生名字 <span class="required">必填</span></label
+                  ><input
+                    id="target"
+                    name="target"
+                    placeholder="輸入官網上的日文源氏名"
+                    maxlength="3000"
+                    required
+                    autocomplete="off"
+                  />
+                  <p id="target-hint" class="field-hint">
+                    保留原始日文寫法，比對會更準確。
+                  </p>
+                </div>
+                <div class="field">
+                  <div class="field-heading">
+                    <label>留言期間</label>
+                    <div class="date-presets" aria-label="快速選擇期間">
+                      <button type="button" data-period="all" class="selected">
+                        全部時間</button
+                      ><button type="button" data-period="3">近 3 個月</button
+                      ><button type="button" data-period="12">近 1 年</button>
+                    </div>
+                  </div>
+                  <div class="date-inputs">
+                    <div>
+                      <label class="sr-only" for="start">開始日期</label
+                      ><input
+                        id="start"
+                        placeholder="最早 · YYYY-MM-DD"
+                        maxlength="20"
+                        autocomplete="off"
+                      />
+                    </div>
+                    <span>至</span>
+                    <div>
+                      <label class="sr-only" for="end">結束日期</label
+                      ><input
+                        id="end"
+                        placeholder="最新 · YYYY-MM-DD"
+                        maxlength="20"
+                        autocomplete="off"
+                      />
+                    </div>
+                  </div>
+                  <p class="field-hint">
+                    支援年份、年月、日期或
+                    now。指定期間時，會排除日期不明的留言。
+                  </p>
+                </div>
+                <details id="advanced">
+                  <summary>進階選項 <span>回覆脈絡與兩段式分析</span></summary>
+                  <div class="advanced-content">
+                    <div class="field">
+                      <label for="depth">回覆脈絡</label
+                      ><select id="depth">
+                        <option value="1">展開 1 層（建議）</option>
+                        <option value="0">不展開</option>
+                        <option value="2">展開 2 層</option>
+                        <option value="all">整條回覆鏈</option>
+                      </select>
+                    </div>
+                    <label class="checkbox-label"
+                      ><input id="two-step" type="checkbox" /><span
+                        >使用兩段式分析<small
+                          >先請模型確認相關留言，再產生報告提示詞。</small
+                        ></span
+                      ></label
+                    >
+                  </div>
+                </details>
+                <div class="form-footer">
+                  <p>
+                    <span class="local-dot" aria-hidden="true"></span
+                    >手動複製給模型，無須 API 金鑰
+                  </p>
+                  <button id="generate" type="submit" class="button primary">
+                    產生提示詞 <span aria-hidden="true">→</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+            <div
+              id="analysis-error"
+              class="notice warning"
+              role="alert"
+              hidden
+            ></div>
+            <section
+              id="prompt-result"
+              class="result-surface"
+              hidden
+              aria-label="產生的提示詞"
+            ></section>
+            <div class="quiet-note">
+              <span aria-hidden="true">↳</span>
+              <p>
+                你選擇分析方向，模型協助整理。<br /><strong
+                  >最後的判斷，回到留言原文。</strong
+                >
+              </p>
+            </div>
+          </section>
+          <section id="verify-panel" class="tab-panel" hidden>
+            <div class="section-heading">
+              <div>
+                <h2>讓結論，回到證據。</h2>
+                <p>貼上模型報告，點選引用 ID 即可查看原文。</p>
+              </div>
+              <span class="step-label">02 / 核對報告</span>
+            </div>
+            <form id="verify-form" class="form-surface">
+              <div class="field">
+                <label for="verify-scope">驗證範圍</label
+                ><select id="verify-scope">
+                  <option value="store">目前店家與所選期間</option>
+                </select>
+                <p id="verify-period" class="field-hint"></p>
+              </div>
+              <div class="field">
+                <label for="report">模型報告</label
+                ><textarea
+                  id="report"
+                  rows="9"
+                  placeholder="在這裡貼上完整報告，包含 T1-123 這類留言引用…"
+                  required
+                  maxlength="4000000"
+                ></textarea>
+              </div>
+              <div class="form-footer">
+                <p>報告只在記憶體中處理</p>
+                <button class="button primary" id="verify-button">
+                  核對引用 <span aria-hidden="true">→</span>
+                </button>
+              </div>
+            </form>
+            <div
+              id="verify-error"
+              class="notice warning"
+              role="alert"
+              hidden
+            ></div>
+            <section id="verification" hidden></section>
+            <p class="footnote">
+              引用存在只代表留言存在；是否支持報告說法、論壇內容是否屬實，仍需自行判斷。
+            </p>
+          </section>
+          <section id="browse-panel" class="tab-panel" hidden>
+            <div class="section-heading">
+              <div>
+                <h2>直接讀原文。</h2>
+                <p>依日期由新到舊，保留留言原始日文。</p>
+              </div>
+              <span class="step-label">資料原文</span>
+            </div>
+            <form id="browse-form" class="browse-toolbar">
+              <label class="search-field"
+                ><span aria-hidden="true">⌕</span
+                ><input
+                  id="comment-search"
+                  type="search"
+                  placeholder="搜尋留言、討論串或引用 ID"
+                  aria-label="搜尋留言" /></label
+              ><button class="button secondary">搜尋</button>
+            </form>
+            <p id="browse-scope" class="field-hint"></p>
+            <div id="comments" aria-live="polite"></div>
+            <div id="pagination" class="pagination"></div>
+          </section>
+        </section>
+        <footer class="page-footer">
+          <span>bakusai<span class="accent"> · </span>以原文為依據</span
+          ><span>本機儲存 · 手動分析 · 引用可查</span>
+        </footer>
+      </main>
+    </div>
+    <dialog id="scrape-dialog" aria-labelledby="scrape-title">
+      <div class="dialog-header">
+        <div>
+          <div class="eyebrow">收集討論</div>
+          <h2 id="scrape-title">新增店家</h2>
+        </div>
+        <button id="close-scrape" class="icon-button" aria-label="關閉抓取視窗">
+          ×
+        </button>
+      </div>
+      <div id="scrape-content"></div>
+    </dialog>
+    <dialog id="help-dialog" aria-labelledby="help-title">
+      <div class="dialog-header">
+        <h2 id="help-title">三步，開始使用。</h2>
+        <button class="icon-button" id="close-help" aria-label="關閉使用說明">
+          ×
+        </button>
+      </div>
+      <ol class="help-steps">
+        <li>
+          <strong>新增或選擇店家</strong>
+          <p>搜尋會連線至 Bakusai。看過抓取計畫並確認後，才開始抓取留言。</p>
+        </li>
+        <li>
+          <strong>產生並複製提示詞</strong>
+          <p>
+            選擇名字、特徵或全店整理，將提示詞貼給你慣用的模型。字數與 tokens
+            粗估會一併顯示。
+          </p>
+        </li>
+        <li>
+          <strong>貼回報告、核對原文</strong>
+          <p>
+            在「報告與引用」貼回結果。引用會區分為範圍內、期間外、未送出與不存在。
+          </p>
+        </li>
+      </ol>
+      <p class="notice">
+        資料與報告請保留於個人研究用途。報告不會自動儲存，重新整理頁面前請自行保留需要的內容。
+      </p>
+    </dialog>
+    <div id="toast" role="status" hidden></div>
+  </body>
+</html>
