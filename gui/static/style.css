@@ -1630,3 +1630,222 @@ dialog::backdrop {
     scroll-behavior: auto !important;
   }
 }
+
+/* Prompt customization keeps the same quiet, local-workspace visual language. */
+.topbar #prompt-settings {
+  margin-left: auto;
+  color: var(--green);
+  white-space: nowrap;
+}
+.template-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 16px;
+  font-size: 12px;
+}
+.template-toolbar small {
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.template-toolbar .text-button {
+  color: var(--green);
+}
+#template-dialog {
+  width: min(820px, calc(100vw - 32px));
+}
+#template-form {
+  margin-top: 22px;
+}
+#template-text {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "PingFang TC", monospace;
+  font-size: 13px;
+  line-height: 1.85;
+  min-height: 260px;
+  max-height: 45vh;
+  tab-size: 2;
+}
+.template-variables {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 14px 0 18px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.template-variables button {
+  padding: 4px 9px;
+  min-height: 32px;
+  border: 1px solid #d6e2cc;
+  border-radius: 5px;
+  color: var(--green);
+  background: var(--green-pale);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.template-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-top: 20px;
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.template-actions > div {
+  display: flex;
+  gap: 10px;
+}
+@media (max-width: 540px) {
+  .topbar {
+    gap: 10px;
+  }
+  .topbar #prompt-settings {
+    font-size: 11px;
+  }
+  .topbar .job-indicator {
+    font-size: 10px;
+    padding: 4px 7px;
+  }
+  .topbar > span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .template-toolbar {
+    align-items: flex-start;
+  }
+  .template-toolbar small {
+    display: block;
+    margin-left: 0;
+    margin-top: 2px;
+  }
+  .template-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .template-actions > div > .button {
+    flex: 1;
+  }
+  #template-text {
+    min-height: 230px;
+    font-size: 12px;
+  }
+}
+
+/* Free-form analysis keeps evidence selection visible and explicit. */
+.mode-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.custom-controls {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+.custom-controls .field {
+  margin-top: 20px;
+}
+.custom-thread-details {
+  margin: 0;
+  padding: 12px 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.custom-thread-tools {
+  display: flex;
+  gap: 16px;
+}
+.custom-thread-list {
+  max-height: 210px;
+  overflow: auto;
+  margin-top: 12px;
+}
+.custom-thread-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 0;
+  font-size: 12px;
+}
+.custom-thread-option input,
+.custom-comment-check input {
+  width: 16px;
+  margin: 4px 0 0;
+  accent-color: var(--green);
+  flex-shrink: 0;
+}
+.custom-thread-option span {
+  overflow-wrap: anywhere;
+}
+.custom-thread-option small {
+  display: block;
+  color: var(--muted);
+}
+.custom-limit-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+.custom-preview-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 24px;
+  font-size: 13px;
+}
+.custom-comment-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  cursor: pointer;
+}
+.custom-comment-check > span {
+  min-width: 0;
+  flex: 1;
+}
+.custom-comment-check .comment-meta {
+  margin-bottom: 8px;
+}
+.custom-comment-check .comment-body {
+  display: block;
+  max-height: 180px;
+  overflow: auto;
+}
+.custom-comment-check .comment-thread {
+  display: block;
+}
+#custom-comments .comment-card {
+  padding: 16px;
+}
+#custom-comments {
+  max-height: 600px;
+  overflow: auto;
+}
+#custom-pagination {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+@media (max-width: 1100px) {
+  .mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 540px) {
+  .custom-limit-row {
+    gap: 12px;
+  }
+  .custom-thread-details {
+    padding: 10px;
+  }
+  .custom-comment-check .comment-meta {
+    flex-wrap: wrap;
+  }
+}

@@ -20,6 +20,8 @@ from analysis import (
 from analysis.cli import describe_honorifics
 from analysis.period import Period, parse_bound
 from scraping import store
+from .templates import validate_overrides
+from . import custom_selection
 
 
 def text_field(data: dict, key: str, maximum: int = 1000) -> str:
@@ -162,6 +164,12 @@ def browse(data: dict) -> dict:
     }
 
 
+def custom_threads(data: dict) -> dict:
+    acode, name = location(data)
+    scoped = period_from(data).apply(load_payload(acode, name))
+    return {"threads": custom_selection.thread_options(scoped)}
+
+
 @dataclass(frozen=True)
 class AnalysisSession:
     acode: int
@@ -172,6 +180,7 @@ class AnalysisSession:
     selected: tuple[select.Selected, ...]
     girl: str
     stage: str
+    templates: dict[str, str]
 
 
 class Workspace:
@@ -212,19 +221,50 @@ class Workspace:
         return session
 
     def generate(self, data: dict) -> dict:
+        templates = validate_overrides(data.get("templates", {}))
         acode, name = location(data)
-        payload = load_payload(acode, name)
-        period = period_from(data)
-        scoped = period.apply(payload)
         mode = text_field(data, "mode", 20)
-        if mode not in {"name", "features", "roster"}:
+        if mode not in {"name", "features", "roster", "other"}:
             raise ValueError("請選擇分析方式")
+        if mode == "other":
+            snapshot = self._session(
+                {**data, "session": data.get("selection_session", "")}
+            )
+            if snapshot.stage != "selection" or snapshot.period != period_from(data):
+                raise ValueError("留言範圍已變更，請重新預覽留言")
+            payload, scoped, period = snapshot.payload, snapshot.scoped, snapshot.period
+        else:
+            payload = load_payload(acode, name)
+            period = period_from(data)
+            scoped = period.apply(payload)
         girl = text_field(data, "target", 3000)
-        if mode != "roster" and not girl:
+        if mode in {"name", "features"} and not girl:
             raise ValueError("請輸入名字或特徵描述")
         notes = []
         stage = "report"
-        if mode == "name":
+        if mode == "other":
+            ids = custom_selection.id_list(data.get("comment_ids", []), "勾選的留言 ID")
+            allowed = {c.comment_id for c in snapshot.selected}
+            if not ids <= allowed:
+                raise ValueError("勾選的留言不在預覽範圍，請重新預覽")
+            choice = data.get("selection_mode", "exclude")
+            if choice not in ("include", "exclude"):
+                raise ValueError("留言勾選方式無效")
+            selected = tuple(
+                c
+                for c in snapshot.selected
+                if (c.comment_id in ids) == (choice == "include")
+            )
+            if not selected:
+                raise ValueError("請至少選擇一則留言")
+            instructions = text_field(data, "instructions", 50_000)
+            if not instructions:
+                raise ValueError("請輸入這次要交給模型的分析要求")
+            text = prompt.build_custom(name, selected, instructions, period)
+            notes = [
+                f"從預覽的 {len(snapshot.selected)} 則中選取 {len(selected)} 則；未自動展開回覆鏈。"
+            ]
+        elif mode == "name":
             depth = data.get("depth", 1)
             if isinstance(depth, bool) or depth not in (0, 1, 2, "all"):
                 raise ValueError("回覆脈絡層數無效")
@@ -235,7 +275,7 @@ class Workspace:
                 raise ValueError("兩段式選項無效")
             stage = "filter" if data.get("two_step") else "report"
             builder = prompt.build_filter if stage == "filter" else prompt.build
-            text = builder(name, girl, selected, period=period)
+            text = builder(name, girl, selected, period=period, overrides=templates)
             notes = [
                 attribution.describe(attribution.confidences(scoped, girl, selected)),
                 describe_honorifics(honorifics.honorific_rate(scoped, girl)),
@@ -255,12 +295,61 @@ class Workspace:
                 features=girl if mode == "features" else None,
                 period=period,
                 threads=threads,
+                overrides=templates,
             )
             notes = ["已納入期間內全部留言，未依名字或特徵字面預篩。"]
         session = AnalysisSession(
-            acode, name, payload, scoped, period, tuple(selected), girl, stage
+            acode,
+            name,
+            payload,
+            scoped,
+            period,
+            tuple(selected),
+            girl,
+            stage,
+            templates,
         )
         return self._remember(session, text, [n.strip() for n in notes if n])
+
+    def custom_preview(self, data: dict) -> dict:
+        acode, name = location(data)
+        payload = load_payload(acode, name)
+        period = period_from(data)
+        scoped = period.apply(payload)
+        selected, matched = custom_selection.choose(scoped, data)
+        snapshot = AnalysisSession(
+            acode, name, payload, scoped, period, selected, "", "selection", {}
+        )
+        remembered = self._remember(snapshot, "", [])
+        return {
+            "session": remembered["session"],
+            "count": len(selected),
+            "matched": matched,
+            **self._selection_page(snapshot, 0),
+        }
+
+    def _selection_page(self, snapshot: AnalysisSession, offset: int) -> dict:
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("留言頁碼無效")
+        by_id = store.comments_by_id(snapshot.scoped)
+        threads = {
+            t["index"]: t.get("thread_title", "")
+            for t in snapshot.scoped.get("threads", [])
+        }
+        return {
+            "count": len(snapshot.selected),
+            "offset": offset,
+            "comments": [
+                comment_view(by_id[c.comment_id], threads)
+                for c in snapshot.selected[offset : offset + 40]
+            ],
+        }
+
+    def custom_page(self, data: dict) -> dict:
+        snapshot = self._session(data)
+        if snapshot.stage != "selection":
+            raise ValueError("這不是留言預覽，請重新選擇留言")
+        return self._selection_page(snapshot, data.get("offset", 0))
 
     def refine(self, data: dict) -> dict:
         session = self._session(data)
@@ -283,8 +372,15 @@ class Workspace:
             tuple(selected),
             session.girl,
             "report",
+            session.templates,
         )
-        text = prompt.build(session.name, session.girl, selected, period=session.period)
+        text = prompt.build(
+            session.name,
+            session.girl,
+            selected,
+            period=session.period,
+            overrides=session.templates,
+        )
         notes = [f"模型確認 {len(known)} 則，展開一層回覆脈絡後共 {len(selected)} 則。"]
         if dropped:
             notes.append("已捨棄未送出的引用：" + "、".join(dropped))
@@ -297,6 +393,8 @@ class Workspace:
         acode, name = location(data)
         if data.get("session"):
             session = self._session(data)
+            if session.stage == "selection":
+                raise ValueError("請先產生提示詞，再核對報告引用")
             payload, scoped, period = session.payload, session.scoped, session.period
             allowed = {c.comment_id for c in session.selected}
             scope_label = "當次提示詞實際送出的留言"

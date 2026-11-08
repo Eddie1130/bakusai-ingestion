@@ -51,6 +51,7 @@
         <span
           >資料庫 <span class="divider">/</span>
           <span id="breadcrumb">開始使用</span></span
+        ><button id="prompt-settings" class="text-button">提示詞設定</button
         ><button id="job-indicator" class="job-indicator" hidden>
           查看抓取進度</button
         ><span class="private-label"
@@ -156,8 +157,39 @@
                   ><span>整理人物、別名與相關討論</span
                   ><span class="radio-mark" aria-hidden="true"></span
                 ></label>
+                <label class="mode-card"
+                  ><input type="radio" name="mode" value="other" />
+                  <span class="mode-icon" aria-hidden="true">✎</span
+                  ><strong>其他／自訂分析</strong>
+                  <span>自己寫要求，自行挑選留言</span
+                  ><span class="radio-mark" aria-hidden="true"></span>
+                </label>
               </fieldset>
+              <div class="template-toolbar">
+                <span
+                  >提示詞範本
+                  <small id="template-summary">使用預設分析規格</small></span
+                >
+                <button id="edit-templates" class="text-button" type="button">
+                  調整範本 ↗
+                </button>
+              </div>
               <div class="form-surface">
+                <div id="custom-task" class="field" hidden>
+                  <label for="custom-instructions"
+                    >這次的分析要求 <span class="required">必填</span></label
+                  >
+                  <textarea
+                    id="custom-instructions"
+                    rows="7"
+                    maxlength="50000"
+                    placeholder="例如：比較這些留言對店家服務的看法，依月份整理轉變，附上引用 ID。"
+                  ></textarea>
+                  <p class="field-hint">
+                    可自由指定問題、語氣與輸出格式；$store
+                    會換成店家名稱。這裡的修改只用於本次分析。
+                  </p>
+                </div>
                 <div id="target-field" class="field">
                   <label for="target" id="target-label"
                     >女生名字 <span class="required">必填</span></label
@@ -209,6 +241,134 @@
                     now。指定期間時，會排除日期不明的留言。
                   </p>
                 </div>
+                <section
+                  id="custom-controls"
+                  class="custom-controls"
+                  hidden
+                  aria-label="自訂分析留言範圍"
+                >
+                  <div class="field-heading">
+                    <label>挑選要提供的留言</label
+                    ><button
+                      id="reload-custom-threads"
+                      class="text-button"
+                      type="button"
+                    >
+                      重新載入討論串
+                    </button>
+                  </div>
+                  <details class="custom-thread-details" open>
+                    <summary>
+                      討論串 <span id="custom-thread-summary">載入中…</span>
+                    </summary>
+                    <div class="custom-thread-tools">
+                      <button
+                        id="custom-all-threads"
+                        type="button"
+                        class="text-button"
+                      >
+                        全部討論串</button
+                      ><button
+                        id="custom-no-threads"
+                        type="button"
+                        class="text-button"
+                      >
+                        全部取消
+                      </button>
+                    </div>
+                    <label class="sr-only" for="custom-thread-search"
+                      >搜尋討論串</label
+                    ><input
+                      id="custom-thread-search"
+                      type="search"
+                      placeholder="搜尋討論串名稱或 T1 等編號"
+                    />
+                    <div id="custom-threads" class="custom-thread-list"></div>
+                  </details>
+                  <div
+                    id="custom-thread-error"
+                    class="notice warning"
+                    role="alert"
+                    hidden
+                  ></div>
+                  <div class="field">
+                    <label for="custom-ranges"
+                      >指定留言 ID／編號範圍
+                      <span class="muted small">選填</span></label
+                    ><input
+                      id="custom-ranges"
+                      maxlength="20000"
+                      placeholder="例如：T1-100～T1-200, T2-50"
+                    />
+                    <p class="field-hint">
+                      多組以逗號分隔；只選一個討論串時可直接填
+                      100～200。日期與討論串條件仍會一起套用。
+                    </p>
+                  </div>
+                  <div class="custom-limit-row">
+                    <div class="field">
+                      <label for="custom-limit">留言數量上限</label
+                      ><input
+                        id="custom-limit"
+                        type="number"
+                        min="0"
+                        max="1000000"
+                        step="1"
+                        value="200"
+                      />
+                      <p class="field-hint">0＝全部。依排序取前 N 則。</p>
+                    </div>
+                    <div class="field">
+                      <label for="custom-order">挑選順序</label
+                      ><select id="custom-order">
+                        <option value="newest">最新留言優先</option>
+                        <option value="oldest">最舊留言優先</option>
+                      </select>
+                      <p class="field-hint">日期不明留言一律排在最後。</p>
+                    </div>
+                  </div>
+                  <button
+                    id="custom-preview-button"
+                    class="button secondary"
+                    type="button"
+                  >
+                    預覽並勾選留言 →
+                  </button>
+                  <div
+                    id="custom-preview-error"
+                    class="notice warning"
+                    role="alert"
+                    hidden
+                  ></div>
+                  <div id="custom-preview" hidden>
+                    <div class="custom-preview-heading">
+                      <strong id="custom-count" role="status"></strong>
+                      <div>
+                        <button
+                          id="custom-select-all"
+                          type="button"
+                          class="text-button"
+                        >
+                          全選這批</button
+                        ><button
+                          id="custom-select-none"
+                          type="button"
+                          class="text-button"
+                        >
+                          全部取消
+                        </button>
+                      </div>
+                    </div>
+                    <p class="field-hint">
+                      預覽已固定本次資料。可跨頁勾選；取消勾選後不會自動補入其他留言，也不會展開回覆鏈。
+                    </p>
+                    <div id="custom-comments"></div>
+                    <div id="custom-pagination" class="pagination"></div>
+                  </div>
+                  <p id="custom-selection-hint" class="field-hint">
+                    先預覽留言，再產生提示詞。修改日期或篩選條件後需重新預覽。
+                  </p>
+                </section>
                 <details id="advanced">
                   <summary>進階選項 <span>回覆脈絡與兩段式分析</span></summary>
                   <div class="advanced-content">
@@ -346,6 +506,77 @@
         </button>
       </div>
       <div id="scrape-content"></div>
+    </dialog>
+    <dialog id="template-dialog" aria-labelledby="template-title">
+      <div class="dialog-header">
+        <div>
+          <div class="eyebrow">依你的方式分析</div>
+          <h2 id="template-title">提示詞設定</h2>
+        </div>
+        <button
+          id="close-templates"
+          class="icon-button"
+          aria-label="關閉提示詞設定"
+        >
+          ×
+        </button>
+      </div>
+      <p class="muted small">
+        調整各種分析的要求與輸出格式。設定儲存在這個瀏覽器，會在下次產生提示詞時套用。
+      </p>
+      <p id="template-loading" class="empty-state">正在載入範本…</p>
+      <div id="template-error" class="notice warning" role="alert" hidden></div>
+      <form id="template-form" hidden>
+        <div class="field">
+          <label for="template-type">選擇範本</label
+          ><select id="template-type"></select>
+        </div>
+        <p id="template-description" class="field-hint"></p>
+        <div
+          id="template-variables"
+          class="template-variables"
+          aria-label="可插入的變數"
+        ></div>
+        <div class="field">
+          <div class="field-heading">
+            <label for="template-text">範本內容</label
+            ><span
+              id="template-count"
+              class="field-hint"
+              aria-live="polite"
+            ></span>
+          </div>
+          <textarea
+            id="template-text"
+            rows="14"
+            spellcheck="false"
+            maxlength="50000"
+            required
+            aria-describedby="template-description template-tip"
+          ></textarea>
+        </div>
+        <p class="field-hint" id="template-tip">
+          變數會自動換成店家、名字或共用評估面向。日期範圍、留言與引用 ID
+          由程式自動附上。
+        </p>
+        <p class="field-hint">
+          既有提示詞與兩段式分析會沿用產生當時的設定。儲存會保留你在各範本中所做的修改。
+        </p>
+        <div class="template-actions">
+          <button id="reset-template" class="text-button" type="button">
+            還原此範本預設
+          </button>
+          <div>
+            <button
+              id="cancel-templates"
+              class="button secondary"
+              type="button"
+            >
+              取消</button
+            ><button class="button primary" type="submit">儲存設定</button>
+          </div>
+        </div>
+      </form>
     </dialog>
     <dialog id="help-dialog" aria-labelledby="help-title">
       <div class="dialog-header">

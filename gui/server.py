@@ -9,7 +9,7 @@ from pathlib import Path
 import secrets
 from urllib.parse import urlsplit
 
-from . import services
+from . import services, templates
 from .jobs import Jobs
 
 logger = logging.getLogger(__name__)
@@ -89,6 +89,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/api/stores":
             self._dispatch(services.store_list)
+        elif route == "/api/templates":
+            self._dispatch(templates.catalog)
         elif route == "/api/job":
             self._json(200, self.server.jobs.current())
         elif route in {"/", "/app.js", "/style.css", "/icon.svg"}:
@@ -126,6 +128,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "無法讀取表單內容，請重新操作"})
             return
         routes = {
+            "/api/custom-threads": services.custom_threads,
+            "/api/custom-preview": self.server.workspace.custom_preview,
+            "/api/custom-page": self.server.workspace.custom_page,
             "/api/browse": services.browse,
             "/api/generate": self.server.workspace.generate,
             "/api/refine": self.server.workspace.refine,

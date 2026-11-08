@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import paths
 from gui import services
+from gui import templates
 from gui.jobs import Jobs, ScrapeJob
 from gui.server import WorkspaceServer
 from scraping import scraper, store
@@ -73,6 +74,102 @@ class WorkspaceTests(unittest.TestCase):
             "depth": 0,
         }
         self.workspace = services.Workspace()
+
+    def test_custom_templates_apply_to_every_analysis_mode(self):
+        for mode, template in (
+            ("name", "report_spec.md"),
+            ("features", "features_spec.md"),
+            ("roster", "roster_spec.md"),
+        ):
+            with self.subTest(mode=mode):
+                result = self.workspace.generate(
+                    {
+                        **self.data,
+                        "mode": mode,
+                        "templates": {template: "自訂分析：$store / $girl。只附證據。"},
+                    }
+                )
+                self.assertIn("自訂分析：測試店", result["prompt"])
+                self.assertIn("T1-2", result["prompt"])
+                self.assertNotIn("T1-1 2025", result["prompt"])
+
+    def test_custom_shared_dimensions_and_discovery_rules(self):
+        named = self.workspace.generate(
+            {
+                **self.data,
+                "templates": {
+                    "report_spec.md": "$store / $girl\n$dimensions",
+                    "dimensions.md": "自訂評估面向：只整理日期與證據。",
+                },
+            }
+        )
+        self.assertIn("測試店 / ナナ", named["prompt"])
+        self.assertIn("自訂評估面向", named["prompt"])
+        for mode in ("features", "roster"):
+            result = self.workspace.generate(
+                {
+                    **self.data,
+                    "mode": mode,
+                    "templates": {"discovery_rules.md": "自訂共同規則：保留所有矛盾。"},
+                }
+            )
+            self.assertIn("自訂共同規則", result["prompt"])
+
+    def test_two_step_freezes_templates_at_first_round(self):
+        overrides = {
+            "filter_spec.md": "第一輪：$girl 的 ID。",
+            "report_spec.md": "原始第二輪設定：$store / $girl",
+        }
+        first = self.workspace.generate(
+            {**self.data, "two_step": True, "templates": overrides}
+        )
+        self.assertIn("第一輪：ナナ", first["prompt"])
+        overrides["report_spec.md"] = "之後才改的設定"
+        second = self.workspace.refine(
+            {
+                **self.data,
+                "session": first["session"],
+                "answer": "T1-2",
+                "templates": overrides,
+            }
+        )
+        self.assertIn("原始第二輪設定：測試店 / ナナ", second["prompt"])
+        self.assertNotIn("之後才改的設定", second["prompt"])
+
+    def test_invalid_template_overrides_are_rejected(self):
+        for overrides in (
+            [],
+            None,
+            {"../README.md": "text"},
+            {"report_spec.md": "  "},
+            {"filter_spec.md": 42},
+            {"report_spec.md": "x" * 50001},
+        ):
+            with (
+                self.subTest(overrides=str(overrides)[:50]),
+                self.assertRaises(ValueError),
+            ):
+                self.workspace.generate({**self.data, "templates": overrides})
+
+    def test_template_catalog_matches_bundled_resources(self):
+        from analysis import prompt
+
+        catalog = templates.catalog()
+        self.assertEqual(len(catalog["templates"]), 7)
+        self.assertEqual(catalog["max_characters"], 50_000)
+        for item in catalog["templates"]:
+            self.assertEqual(item["default"], prompt.load_template(item["name"]))
+        self.assertEqual(templates.validate_overrides({}), {})
+
+    def test_defaults_unchanged_and_custom_settings_do_not_leak(self):
+        baseline = self.workspace.generate(self.data)["prompt"]
+        self.workspace.generate(
+            {**self.data, "templates": {"report_spec.md": "獨立設定"}}
+        )
+        self.assertEqual(self.workspace.generate(self.data)["prompt"], baseline)
+        self.assertEqual(
+            self.workspace.generate({**self.data, "templates": {}})["prompt"], baseline
+        )
 
     def test_store_summary_and_partial_status(self):
         result = services.store_list()
@@ -334,6 +431,16 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(self.request(path=path)[0], 200)
         self.assertEqual(self.request(path="/../paths.py")[0], 404)
         self.assertEqual(self.request(path="/data/test.json")[0], 404)
+
+    def test_template_endpoint_requires_token_and_returns_catalog(self):
+        self.assertEqual(self.request(path="/api/templates")[0], 403)
+        status, _, body = self.request(
+            path="/api/templates", headers={"X-Workspace-Token": self.server.token}
+        )
+        self.assertEqual(status, 200)
+        catalog = json.loads(body)
+        self.assertEqual(len(catalog["templates"]), 7)
+        self.assertIn("$girl", catalog["templates"][0]["default"])
 
     def test_api_requires_token_and_refuses_foreign_host_origin(self):
         headers = {"X-Workspace-Token": self.server.token}

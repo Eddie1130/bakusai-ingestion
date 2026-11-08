@@ -19,7 +19,23 @@ const state = {
   finishedJob: null,
   connected: true,
   verifyVersion: 0,
+  templateCatalog: null,
+  templateOverrides: {},
+  templatePromise: null,
+  templateWarning: "",
+  templateVersion: 0,
+  customPreview: null,
+  customIds: new Set(),
+  customSelectionMode: "exclude",
+  customThreads: null,
+  customThreadOptions: [],
+  customThreadRequest: 0,
+  customVersion: 0,
+  customSeed: "",
+  generating: false,
 };
+const TEMPLATE_STORAGE_KEY = "bakusai.prompt-templates.v1";
+const templateEditor = { drafts: {}, current: null };
 const escapeHTML = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -189,6 +205,10 @@ function chooseStore(store, ask = true) {
   )
     return;
   state.store = store;
+  state.customThreads = null;
+  state.customThreadOptions = [];
+  renderCustomThreads();
+  resetCustomSelection();
   state.version++;
   state.browseVersion++;
   state.generated = null;
@@ -205,6 +225,7 @@ function chooseStore(store, ask = true) {
   renderHeader();
   renderStores();
   updateScope();
+  renderMode();
   switchTab("analysis");
 }
 function switchTab(name) {
@@ -230,11 +251,20 @@ function invalidate() {
   $("#verify-scope").innerHTML =
     '<option value="store">目前店家與所選期間</option>';
   updateScope();
+  updateCustomCount();
 }
 function renderMode() {
   const mode = $('input[name="mode"]:checked').value;
-  $("#target-field").hidden = mode === "roster";
-  $("#target").required = mode !== "roster";
+  const other = mode === "other";
+  $("#target-field").hidden = !["name", "features"].includes(mode);
+  $("#target").required = ["name", "features"].includes(mode);
+  $("#custom-task").hidden = !other;
+  $("#custom-controls").hidden = !other;
+  $("#custom-instructions").required = other;
+  $("#custom-instructions").disabled = !other;
+  $$("#custom-controls input, #custom-controls select").forEach((input) => {
+    input.disabled = !other;
+  });
   $("#target-label").innerHTML =
     `${mode === "features" ? "特徵描述" : "女生名字"} <span class="required">必填</span>`;
   $("#target").placeholder =
@@ -246,6 +276,11 @@ function renderMode() {
       ? "可以用中文描述；會提供期間內全部留言，讓模型比對日文線索。"
       : "保留原始日文寫法，比對會更準確。";
   $("#advanced").hidden = mode !== "name";
+  if (other) {
+    seedCustomInstructions();
+    loadCustomThreads();
+  }
+  updateCustomCount();
 }
 function localDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -274,6 +309,8 @@ function preset(months) {
     button.classList.toggle("selected", button.dataset.period === months),
   );
   invalidate();
+  resetCustomSelection();
+  if ($('input[name="mode"]:checked').value === "other") loadCustomThreads();
 }
 function renderPrompt(result) {
   state.verifyVersion++;
@@ -299,22 +336,51 @@ function renderPrompt(result) {
 async function generate(event) {
   event.preventDefault();
   const version = state.version;
+  const templateVersion = state.templateVersion;
   $("#analysis-error").hidden = true;
+  state.generating = true;
   await busy($("#generate"), async () => {
     try {
+      await loadTemplates();
+      if (
+        version !== state.version ||
+        templateVersion !== state.templateVersion
+      )
+        return;
       const mode = $('input[name="mode"]:checked').value;
+      if (mode === "other" && !state.customPreview)
+        throw new Error("請先預覽並勾選要提供的留言");
       const result = await api("/api/generate", {
         ...context(),
         mode,
         target: $("#target").value,
         depth: $("#depth").value === "all" ? "all" : Number($("#depth").value),
         two_step: $("#two-step").checked,
+        templates: state.templateOverrides,
+        ...(mode === "other"
+          ? {
+              instructions: $("#custom-instructions").value,
+              selection_session: state.customPreview.session,
+              selection_mode: state.customSelectionMode,
+              comment_ids: [...state.customIds],
+            }
+          : {}),
       });
-      if (version === state.version) renderPrompt(result);
+      if (
+        version === state.version &&
+        templateVersion === state.templateVersion
+      )
+        renderPrompt(result);
     } catch (error) {
-      if (version === state.version) showError("#analysis-error", error);
+      if (
+        version === state.version &&
+        templateVersion === state.templateVersion
+      )
+        showError("#analysis-error", error);
     }
   });
+  state.generating = false;
+  updateCustomCount();
 }
 async function copyPrompt() {
   const generated = state.generated;
@@ -596,6 +662,451 @@ async function pollJob() {
   setTimeout(pollJob, 1200);
 }
 
+function syncCustomSeed() {
+  const template = state.templateCatalog?.find(
+    (item) => item.name === "custom_spec.md",
+  );
+  if (!template) return;
+  const seed = state.templateOverrides[template.name] ?? template.default;
+  const input = $("#custom-instructions");
+  if (!input.value || input.value === state.customSeed) input.value = seed;
+  state.customSeed = seed;
+}
+async function seedCustomInstructions() {
+  try {
+    await loadTemplates();
+    syncCustomSeed();
+  } catch (error) {
+    showError("#analysis-error", error);
+  }
+}
+function resetCustomSelection() {
+  state.customVersion++;
+  state.customPreview = null;
+  state.customIds = new Set();
+  state.customSelectionMode = "exclude";
+  $("#custom-preview").hidden = true;
+  $("#custom-preview-error").hidden = true;
+  $("#custom-selection-hint").textContent =
+    "先預覽留言，再產生提示詞。修改日期或篩選條件後需重新預覽。";
+  updateCustomCount();
+}
+function customSelectedCount() {
+  return state.customPreview
+    ? state.customSelectionMode === "include"
+      ? state.customIds.size
+      : state.customPreview.count - state.customIds.size
+    : 0;
+}
+function updateCustomCount() {
+  const count = customSelectedCount();
+  if (state.customPreview)
+    $("#custom-count").textContent =
+      `符合 ${number(state.customPreview.matched)} 則・本批 ${number(state.customPreview.count)} 則・已選 ${number(count)} 則`;
+  $("#generate").disabled =
+    state.generating ||
+    ($('input[name="mode"]:checked').value === "other" && count === 0);
+}
+function renderCustomThreads() {
+  const query = $("#custom-thread-search").value.trim().toLocaleLowerCase();
+  $("#custom-threads").innerHTML =
+    state.customThreadOptions
+      .map((thread, index) => {
+        const matches = `${thread.id} ${thread.title}`
+          .toLocaleLowerCase()
+          .includes(query);
+        const checked =
+          state.customThreads === null || state.customThreads.has(thread.id);
+        return `<label class="custom-thread-option" ${matches ? "" : "hidden"}><input type="checkbox" data-thread="${index}" ${checked ? "checked" : ""}><span>${escapeHTML(thread.id)} · ${escapeHTML(thread.title)}<small>${number(thread.count)} 則期間內留言</small></span></label>`;
+      })
+      .join("") || '<p class="field-hint">目前沒有可用討論串。</p>';
+  const selected = state.customThreadOptions.filter(
+    (t) => state.customThreads === null || state.customThreads.has(t.id),
+  ).length;
+  $("#custom-thread-summary").textContent =
+    `已選 ${selected} / ${state.customThreadOptions.length} 串`;
+}
+async function loadCustomThreads() {
+  if (!state.store || $('input[name="mode"]:checked').value !== "other") return;
+  const request = ++state.customThreadRequest;
+  const source = JSON.stringify(context());
+  $("#custom-thread-error").hidden = true;
+  $("#custom-preview-button").disabled = true;
+  try {
+    const result = await api("/api/custom-threads", context());
+    if (
+      request !== state.customThreadRequest ||
+      source !== JSON.stringify(context())
+    )
+      return;
+    state.customThreadOptions = result.threads;
+    if ($('input[name="mode"]:checked').value !== "other") return;
+    renderCustomThreads();
+    $("#custom-preview-button").disabled = false;
+  } catch (error) {
+    if (request === state.customThreadRequest)
+      showError("#custom-thread-error", error);
+  }
+}
+async function previewCustomComments() {
+  const version = state.customVersion;
+  const limit = $("#custom-limit").value;
+  $("#custom-preview-error").hidden = true;
+  if (!/^\d+$/.test(limit) || Number(limit) > 1000000) {
+    showError(
+      "#custom-preview-error",
+      new Error("留言數量上限必須為 0～1,000,000 的整數"),
+    );
+    return;
+  }
+  await busy($("#custom-preview-button"), async () => {
+    try {
+      const result = await api("/api/custom-preview", {
+        ...context(),
+        threads: state.customThreads === null ? null : [...state.customThreads],
+        ranges: $("#custom-ranges").value,
+        limit: Number(limit),
+        order: $("#custom-order").value,
+      });
+      if (version !== state.customVersion) return;
+      invalidate();
+      state.customPreview = {
+        session: result.session,
+        count: result.count,
+        matched: result.matched,
+      };
+      state.customIds = new Set();
+      state.customSelectionMode = "exclude";
+      $("#custom-preview").hidden = false;
+      $("#custom-selection-hint").textContent = result.count
+        ? "確認勾選後，即可產生提示詞。"
+        : "沒有符合的留言，請調整範圍後重新預覽。";
+      renderCustomComments(result);
+      updateCustomCount();
+    } catch (error) {
+      if (version === state.customVersion)
+        showError("#custom-preview-error", error);
+    }
+  });
+}
+function renderCustomComments(result) {
+  $("#custom-comments").innerHTML =
+    result.comments
+      .map((comment) => {
+        const checked =
+          state.customSelectionMode === "include"
+            ? state.customIds.has(comment.id)
+            : !state.customIds.has(comment.id);
+        return `<article class="comment-card"><label class="custom-comment-check"><input type="checkbox" data-custom-comment="${escapeHTML(comment.id)}" ${checked ? "checked" : ""} aria-label="提供 ${escapeHTML(comment.id)} 給模型"><span><span class="comment-meta"><strong>${escapeHTML(comment.id)}</strong><span>${escapeHTML(comment.date)}</span></span><span class="comment-body">${escapeHTML(comment.body)}</span><span class="comment-thread">${escapeHTML(comment.thread)}</span></span></label></article>`;
+      })
+      .join("") || '<p class="empty-state">這個範圍沒有留言。</p>';
+  $("#custom-pagination").innerHTML =
+    `<button type="button" class="button secondary" data-custom-page="${Math.max(0, result.offset - 40)}" ${result.offset === 0 ? "disabled" : ""}>← 上一頁</button><span>${result.count ? `${number(result.offset + 1)}–${number(Math.min(result.offset + 40, result.count))} / ` : ""}${number(result.count)} 則</span><button type="button" class="button secondary" data-custom-page="${result.offset + 40}" ${result.offset + 40 >= result.count ? "disabled" : ""}>下一頁 →</button>`;
+  state.customPreview.page = result;
+}
+let customPageRequest = 0;
+async function customPage(offset) {
+  const session = state.customPreview?.session;
+  if (!session) return;
+  const request = ++customPageRequest;
+  try {
+    const result = await api("/api/custom-page", {
+      ...context(),
+      session,
+      offset,
+    });
+    if (
+      session === state.customPreview?.session &&
+      request === customPageRequest
+    )
+      renderCustomComments(result);
+  } catch (error) {
+    if (session === state.customPreview?.session)
+      showError("#custom-preview-error", error);
+  }
+}
+
+function updateTemplateSummary() {
+  const count = Object.keys(state.templateOverrides).length;
+  $("#template-summary").textContent = count
+    ? `已自訂 ${count} 份・下次產生時套用`
+    : "使用預設分析規格";
+}
+async function loadTemplates() {
+  if (state.templateCatalog) return;
+  if (state.templatePromise) return state.templatePromise;
+  state.templatePromise = (async () => {
+    const data = await api("/api/templates");
+    const overrides = {};
+    try {
+      const stored = localStorage.getItem(TEMPLATE_STORAGE_KEY);
+      if (stored !== null) {
+        const parsed = JSON.parse(stored);
+        const saved = parsed?.templates;
+        const names = new Set(data.templates.map((item) => item.name));
+        if (
+          parsed?.version !== 1 ||
+          !saved ||
+          typeof saved !== "object" ||
+          Array.isArray(saved) ||
+          Object.entries(saved).some(
+            ([name, text]) =>
+              !names.has(name) ||
+              typeof text !== "string" ||
+              !text.trim() ||
+              text.length > data.max_characters,
+          )
+        ) {
+          throw new Error("invalid stored templates");
+        }
+        Object.assign(overrides, saved);
+      }
+    } catch {
+      state.templateWarning =
+        "無法讀取已儲存的範本，目前使用預設內容。你可以重新編輯並儲存設定。";
+      toast(state.templateWarning);
+    }
+    state.templateCatalog = data.templates;
+    state.templateOverrides = overrides;
+    $("#template-text").maxLength = data.max_characters;
+    updateTemplateSummary();
+  })();
+  try {
+    await state.templatePromise;
+  } finally {
+    state.templatePromise = null;
+  }
+}
+function captureTemplateDraft() {
+  if (!templateEditor.current) return;
+  const item = state.templateCatalog.find(
+    (entry) => entry.name === templateEditor.current,
+  );
+  const text = $("#template-text").value;
+  if (text === item.default) delete templateEditor.drafts[item.name];
+  else templateEditor.drafts[item.name] = text;
+}
+function renderTemplateEditor(name) {
+  const item = state.templateCatalog.find((entry) => entry.name === name);
+  if (!item) return;
+  templateEditor.current = name;
+  $("#template-type").replaceChildren(
+    ...state.templateCatalog.map(
+      (entry) =>
+        new Option(
+          entry.label +
+            (Object.hasOwn(templateEditor.drafts, entry.name) ? " · 自訂" : ""),
+          entry.name,
+        ),
+    ),
+  );
+  $("#template-type").value = name;
+  $("#template-description").textContent = item.description;
+  $("#template-text").value = templateEditor.drafts[name] ?? item.default;
+  $("#template-count").textContent =
+    `${number($("#template-text").value.length)} / ${number($("#template-text").maxLength)} 字元`;
+  $("#template-variables").innerHTML = item.placeholders.length
+    ? `<span>點選插入變數：</span>${item.placeholders.map((variable) => `<button type="button" data-variable="${escapeHTML(variable)}" aria-label="插入 ${escapeHTML(variable)}">${escapeHTML(variable)}</button>`).join("")}`
+    : "這份共用範本使用純文字，不需插入變數。";
+}
+async function openTemplates() {
+  const dialog = $("#template-dialog");
+  $("#template-error").hidden = true;
+  $("#template-form").hidden = true;
+  $("#template-loading").hidden = false;
+  if (!dialog.open) dialog.showModal();
+  try {
+    await loadTemplates();
+    if (!dialog.open) return;
+    templateEditor.drafts = { ...state.templateOverrides };
+    const mode = $('input[name="mode"]:checked').value;
+    const name =
+      mode === "other"
+        ? "custom_spec.md"
+        : mode === "name"
+          ? $("#two-step").checked
+            ? "filter_spec.md"
+            : "report_spec.md"
+          : mode === "features"
+            ? "features_spec.md"
+            : "roster_spec.md";
+    renderTemplateEditor(name);
+    $("#template-form").hidden = false;
+    if (state.templateWarning)
+      showError("#template-error", new Error(state.templateWarning));
+  } catch (error) {
+    showError("#template-error", error);
+  } finally {
+    $("#template-loading").hidden = true;
+  }
+}
+function saveTemplates(event) {
+  event.preventDefault();
+  captureTemplateDraft();
+  $("#template-error").hidden = true;
+  for (const item of state.templateCatalog) {
+    const text = templateEditor.drafts[item.name];
+    if (text === undefined) continue;
+    if (!text.trim() || text.length > $("#template-text").maxLength) {
+      renderTemplateEditor(item.name);
+      showError(
+        "#template-error",
+        new Error(`「${item.label}」不可留空，且最多 50,000 個字元。`),
+      );
+      $("#template-text").focus();
+      return;
+    }
+  }
+  const overrides = { ...templateEditor.drafts };
+  try {
+    localStorage.setItem(
+      TEMPLATE_STORAGE_KEY,
+      JSON.stringify({ version: 1, templates: overrides }),
+    );
+  } catch {
+    showError(
+      "#template-error",
+      new Error(
+        "無法儲存設定，請確認瀏覽器允許網站儲存資料，或清出儲存空間後再試。修改內容仍保留在編輯器中。",
+      ),
+    );
+    return;
+  }
+  state.templateOverrides = overrides;
+  syncCustomSeed();
+  state.templateWarning = "";
+  // Existing analysis snapshots stay valid; discard only pending generations
+  // that used older settings, without interrupting browsing or verification.
+  state.templateVersion++;
+  updateTemplateSummary();
+  $("#template-dialog").close();
+  toast("已儲存範本設定，下次產生提示詞時套用。既有分析沿用原設定。");
+}
+
+$("#prompt-settings").addEventListener("click", openTemplates);
+$("#edit-templates").addEventListener("click", openTemplates);
+$("#close-templates").addEventListener("click", () =>
+  $("#template-dialog").close(),
+);
+$("#cancel-templates").addEventListener("click", () =>
+  $("#template-dialog").close(),
+);
+$("#template-type").addEventListener("change", (event) => {
+  captureTemplateDraft();
+  $("#template-error").hidden = true;
+  renderTemplateEditor(event.target.value);
+});
+$("#template-text").addEventListener("input", () => {
+  $("#template-count").textContent =
+    `${number($("#template-text").value.length)} / ${number($("#template-text").maxLength)} 字元・尚未儲存`;
+});
+$("#reset-template").addEventListener("click", () => {
+  delete templateEditor.drafts[templateEditor.current];
+  renderTemplateEditor(templateEditor.current);
+  $("#template-error").hidden = true;
+  $("#template-count").textContent += "・儲存後恢復預設";
+});
+$("#template-variables").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-variable]");
+  if (!button) return;
+  const input = $("#template-text");
+  const variable = button.dataset.variable;
+  if (
+    input.value.length -
+      (input.selectionEnd - input.selectionStart) +
+      variable.length >
+    input.maxLength
+  ) {
+    showError(
+      "#template-error",
+      new Error("範本已達字數上限，請先刪除部分內容。"),
+    );
+    return;
+  }
+  input.setRangeText(variable, input.selectionStart, input.selectionEnd, "end");
+  input.dispatchEvent(new Event("input"));
+  input.focus();
+});
+$("#template-form").addEventListener("submit", saveTemplates);
+loadTemplates().catch(() => {
+  $("#template-summary").textContent = "範本尚未載入，請開啟設定重試";
+});
+
+$("#custom-instructions").addEventListener("input", invalidate);
+$("#custom-preview-button").addEventListener("click", previewCustomComments);
+$("#reload-custom-threads").addEventListener("click", () => {
+  resetCustomSelection();
+  invalidate();
+  loadCustomThreads();
+});
+$("#custom-thread-search").addEventListener("input", renderCustomThreads);
+$("#custom-all-threads").addEventListener("click", () => {
+  state.customThreads = null;
+  renderCustomThreads();
+  resetCustomSelection();
+  invalidate();
+});
+$("#custom-no-threads").addEventListener("click", () => {
+  state.customThreads = new Set();
+  renderCustomThreads();
+  resetCustomSelection();
+  invalidate();
+});
+$("#custom-threads").addEventListener("change", (event) => {
+  const input = event.target.closest("[data-thread]");
+  if (!input) return;
+  const thread = state.customThreadOptions[Number(input.dataset.thread)];
+  if (!thread) return;
+  if (state.customThreads === null)
+    state.customThreads = new Set(state.customThreadOptions.map((t) => t.id));
+  const id = thread.id;
+  if (input.checked) state.customThreads.add(id);
+  else state.customThreads.delete(id);
+  resetCustomSelection();
+  invalidate();
+  renderCustomThreads();
+});
+["custom-ranges", "custom-limit", "custom-order"].forEach((id) =>
+  $(`#${id}`).addEventListener("input", () => {
+    resetCustomSelection();
+    invalidate();
+  }),
+);
+$("#custom-comments").addEventListener("change", (event) => {
+  const input = event.target.closest("[data-custom-comment]");
+  if (!input) return;
+  const id = input.dataset.customComment;
+  if (input.checked === (state.customSelectionMode === "include"))
+    state.customIds.add(id);
+  else state.customIds.delete(id);
+  invalidate();
+  updateCustomCount();
+});
+$("#custom-pagination").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-custom-page]");
+  if (button) customPage(Number(button.dataset.customPage));
+});
+for (const [id, mode] of [
+  ["custom-select-all", "exclude"],
+  ["custom-select-none", "include"],
+]) {
+  $(`#${id}`).addEventListener("click", () => {
+    if (!state.customPreview) return;
+    state.customSelectionMode = mode;
+    state.customIds = new Set();
+    invalidate();
+    renderCustomComments(state.customPreview.page);
+    updateCustomCount();
+  });
+}
+let customDateTimer;
+function customDatesChanged() {
+  resetCustomSelection();
+  clearTimeout(customDateTimer);
+  if ($('input[name="mode"]:checked').value === "other")
+    customDateTimer = setTimeout(loadCustomThreads, 250);
+}
+
 $("#region").addEventListener("change", renderStores);
 $("#store-search").addEventListener("input", renderStores);
 $("#stores").addEventListener("click", (event) => {
@@ -610,12 +1121,14 @@ $$("[data-period]").forEach((button) =>
 );
 $$('input[name="mode"]').forEach((input) =>
   input.addEventListener("change", () => {
+    resetCustomSelection();
     renderMode();
     invalidate();
   }),
 );
 ["target", "start", "end", "depth", "two-step"].forEach((id) =>
   $(`#${id}`).addEventListener("input", () => {
+    if (id === "start" || id === "end") customDatesChanged();
     if (id === "start" || id === "end")
       $$("[data-period]").forEach((button) =>
         button.classList.remove("selected"),
