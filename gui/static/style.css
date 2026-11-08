@@ -1849,3 +1849,56 @@ dialog::backdrop {
     flex-wrap: wrap;
   }
 }
+
+/* Two-step full filtering: visible progress, bounded batches, explicit review. */
+.two-step-options {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  margin-top: 6px;
+}
+.two-step-options .field + .field {
+  margin-top: 18px;
+}
+.full-progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--green);
+  margin: 5px 0 20px;
+}
+.full-batch-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 20px 0;
+}
+.full-batch-toolbar select {
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+}
+.full-batch-toolbar .button {
+  padding: 9px 12px;
+}
+.full-resume {
+  margin-top: 20px;
+  white-space: normal;
+  text-align: left;
+}
+#full-finalize {
+  margin-top: 18px;
+}
+@media (max-width: 650px) {
+  .full-batch-toolbar {
+    flex-wrap: wrap;
+  }
+  .full-batch-toolbar select {
+    order: -1;
+    flex-basis: 100%;
+  }
+  .full-batch-toolbar .button {
+    flex: 1;
+  }
+  .two-step-options select {
+    font-size: 12px;
+  }
+}

@@ -33,8 +33,25 @@ const state = {
   customVersion: 0,
   customSeed: "",
   generating: false,
+  fullRun: null,
+  fullDrafts: new Map(),
+  fullRequest: 0,
+  fullBusy: false,
 };
 const TEMPLATE_STORAGE_KEY = "bakusai.prompt-templates.v1";
+const FULL_RUN_KEY = "bakusai.full-filter.v1";
+try {
+  const saved = JSON.parse(sessionStorage.getItem(FULL_RUN_KEY));
+  if (
+    saved &&
+    typeof saved.session === "string" &&
+    Number.isInteger(saved.acode) &&
+    typeof saved.name === "string"
+  )
+    state.fullRun = saved;
+} catch {
+  /* Tab storage is optional; server-side progress remains available. */
+}
 const templateEditor = { drafts: {}, current: null };
 const escapeHTML = (value) =>
   String(value ?? "").replace(
@@ -204,6 +221,7 @@ function chooseStore(store, ask = true) {
     !window.confirm("切換店家會清除目前畫面中的提示詞與報告。確定切換？")
   )
     return;
+  captureFullDraft();
   state.store = store;
   state.customThreads = null;
   state.customThreadOptions = [];
@@ -227,6 +245,7 @@ function chooseStore(store, ask = true) {
   updateScope();
   renderMode();
   switchTab("analysis");
+  updateFullResume();
 }
 function switchTab(name) {
   state.tab = name;
@@ -243,6 +262,8 @@ function switchTab(name) {
   if (name === "browse" && state.store) loadComments(0);
 }
 function invalidate() {
+  captureFullDraft();
+  state.fullRequest++;
   state.version++;
   state.generated = null;
   state.verified = null;
@@ -252,6 +273,7 @@ function invalidate() {
     '<option value="store">目前店家與所選期間</option>';
   updateScope();
   updateCustomCount();
+  updateFullResume();
 }
 function renderMode() {
   const mode = $('input[name="mode"]:checked').value;
@@ -275,7 +297,10 @@ function renderMode() {
     mode === "features"
       ? "可以用中文描述；會提供期間內全部留言，讓模型比對日文線索。"
       : "保留原始日文寫法，比對會更準確。";
-  $("#advanced").hidden = mode !== "name";
+  $("#advanced").hidden = !["name", "features"].includes(mode);
+  $("#advanced-caption").textContent =
+    mode === "features" ? "分析方式與分批" : "回覆脈絡與兩段式分析";
+  updateFilterOptions();
   if (other) {
     seedCustomInstructions();
     loadCustomThreads();
@@ -313,6 +338,10 @@ function preset(months) {
   if ($('input[name="mode"]:checked').value === "other") loadCustomThreads();
 }
 function renderPrompt(result) {
+  if (result.stage === "full_filter") {
+    renderFullFilter(result);
+    return;
+  }
   state.verifyVersion++;
   state.generated = result;
   const isFilter = result.stage === "filter";
@@ -320,6 +349,7 @@ function renderPrompt(result) {
     `<div class="result-heading"><h3>${isFilter ? "第一輪提示詞已準備好" : "提示詞已準備好"}</h3><span class="badge">${isFilter ? "兩段式 · 1 / 2" : "可以複製了"}</span></div>
     <div class="result-metrics"><span><strong>${number(result.count)}</strong> 則留言</span><span><strong>${number(result.characters)}</strong> 字元</span><span>約 <strong>${number(result.tokens.lower)}～${number(result.tokens.upper)}</strong> tokens</span></div>
     <p class="field-hint">${escapeHTML(result.period)}</p>
+    ${result.warning ? `<div class="notice warning">${escapeHTML(result.warning)}</div>` : ""}
     <p class="field-hint">tokens 為 UTF-8 位元組粗估，非精確計數，實際用量可能超出範圍；不含既有對話、系統指令或模型輸出。請確認模型能容納全文。</p>
     <div class="result-actions"><button class="button primary" id="copy-prompt">複製提示詞 <span aria-hidden="true">↗</span></button><button class="button secondary" id="download-prompt">下載文字檔</button>${isFilter ? "" : '<button class="text-button" id="go-verify">下一步：貼回模型報告 →</button>'}</div>
     <details><summary>預覽完整提示詞</summary><pre class="prompt-preview" id="prompt-text"></pre></details>
@@ -332,6 +362,7 @@ function renderPrompt(result) {
   $("#verify-scope").innerHTML =
     '<option value="prompt">當次提示詞實際送出的留言（建議）</option><option value="store">目前店家與所選期間</option>';
   $("#prompt-result").scrollIntoView({ behavior: "smooth", block: "start" });
+  updateFullResume();
 }
 async function generate(event) {
   event.preventDefault();
@@ -339,6 +370,7 @@ async function generate(event) {
   const templateVersion = state.templateVersion;
   $("#analysis-error").hidden = true;
   state.generating = true;
+  state.fullRequest++;
   await busy($("#generate"), async () => {
     try {
       await loadTemplates();
@@ -356,6 +388,9 @@ async function generate(event) {
         target: $("#target").value,
         depth: $("#depth").value === "all" ? "all" : Number($("#depth").value),
         two_step: $("#two-step").checked,
+        filter_strategy: $("#filter-strategy").value,
+        feature_analysis: $("#feature-analysis").value,
+        batch_comments: Number($("#batch-comments").value),
         templates: state.templateOverrides,
         ...(mode === "other"
           ? {
@@ -406,13 +441,20 @@ function downloadPrompt() {
   );
   const link = document.createElement("a");
   link.href = url;
-  link.download = "bakusai-prompt.txt";
+  link.download =
+    state.generated.stage === "full_filter"
+      ? `bakusai-filter-${state.generated.filter.current + 1}-of-${state.generated.filter.total}.txt`
+      : "bakusai-prompt.txt";
   document.body.append(link);
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 async function refine() {
+  if (state.generated?.stage === "full_filter") {
+    await submitFullBatch();
+    return;
+  }
   const version = state.version;
   const session = state.generated?.session;
   $("#refine-error").hidden = true;
@@ -431,6 +473,301 @@ async function refine() {
     }
   });
 }
+function updateFilterOptions() {
+  const mode = $('input[name="mode"]:checked').value;
+  const features = mode === "features";
+  const nameEnabled = mode === "name" && $("#two-step").checked;
+  const full =
+    features || (nameEnabled && $("#filter-strategy").value === "full");
+  $("#name-analysis-options").hidden = mode !== "name";
+  $("#two-step").disabled = mode !== "name";
+  $("#feature-analysis-field").hidden = !features;
+  $("#feature-analysis").disabled = !features;
+  $("#feature-analysis-hint").textContent =
+    $("#feature-analysis").value === "direct"
+      ? "一批內可直接完成；超過一批會逐批收集暫時分析，最後整合重複人選、別名與矛盾。每項具體說法需附本批引用 ID。"
+      : "全部期間內留言分批閱讀，先選取符合、部分符合、矛盾與不確定線索的 ID，再合併原文產生候選人報告。";
+  $("#two-step-options").hidden = !nameEnabled && !features;
+  $("#filter-strategy-field").hidden = features;
+  $("#filter-strategy").disabled = !nameEnabled;
+  $("#batch-size-field").hidden = !full;
+  $("#batch-comments").disabled = !full;
+  $("#depth").disabled = full || mode !== "name";
+  $("#filter-strategy-hint").textContent = full
+    ? "全部期間內留言都會閱讀，不先比對名字。依留言數量分批，搭配同串鄰近及直接回覆脈絡；第二輪固定展開一層回覆。"
+    : "提供名字比對及回覆脈絡挑出的候選留言，讓模型排除誤判。";
+}
+function updateFullResume() {
+  const run = state.fullRun;
+  $("#full-resume").hidden = !run || state.generated?.session === run.session;
+  if (run)
+    $("#full-resume").textContent =
+      `繼續${run.analysis_mode === "features" ? "特徵尋人分批處理" : "完整篩選"}：${run.name}・${run.completed || 0}/${run.total || "?"} 批已完成`;
+}
+function fullDraftKey(result = state.generated) {
+  return `${result.session}:${result.filter.current}`;
+}
+function captureFullDraft() {
+  if (state.generated?.stage !== "full_filter" || !$("#filter-answer")) return;
+  const value = $("#filter-answer").value;
+  const key = fullDraftKey();
+  if (value.trim() === state.generated.filter.saved_answer.trim())
+    state.fullDrafts.delete(key);
+  else state.fullDrafts.set(key, value);
+}
+function hasFullDrafts() {
+  const prefix = `${state.generated?.session}:`;
+  return [...state.fullDrafts.keys()].some((key) => key.startsWith(prefix));
+}
+function batchOptionLabel(batch, result) {
+  const saved =
+    result.output_kind === "reports"
+      ? `已儲存分析${batch.missing_citations ? "・無引用" : ""}`
+      : `已確認 ${batch.confirmed_count} 則`;
+  const status = state.fullDrafts.has(`${result.session}:${batch.index}`)
+    ? "有未確認草稿"
+    : batch.complete
+      ? saved
+      : "待處理";
+  return `第 ${batch.index + 1} 批・${batch.primary_count} 則主要留言・${status}`;
+}
+function updateFullControls() {
+  if (state.generated?.stage !== "full_filter") return;
+  const filter = state.generated.filter;
+  if ($("#filter-answer")) $("#filter-answer").disabled = state.fullBusy;
+  if ($("#full-discard")) $("#full-discard").disabled = state.fullBusy;
+  if ($("#full-batch-select"))
+    [...$("#full-batch-select").options].forEach((option) => {
+      const batch = filter.batches[Number(option.value)];
+      option.textContent = batchOptionLabel(batch, state.generated);
+    });
+  $$("[data-full-nav]").forEach((button) => {
+    const i = Number(button.dataset.fullNav);
+    button.disabled = state.fullBusy || i < 0 || i >= filter.total;
+  });
+  if ($("#full-batch-select"))
+    $("#full-batch-select").disabled = state.fullBusy;
+  if ($("#refine")) $("#refine").disabled = state.fullBusy;
+  if ($("#full-finalize"))
+    $("#full-finalize").disabled =
+      state.fullBusy ||
+      !filter.all_done ||
+      (!filter.confirmed_count && state.generated.output_kind !== "reports") ||
+      hasFullDrafts();
+  if ($("#full-unsaved")) $("#full-unsaved").hidden = !hasFullDrafts();
+}
+function renderFullFilter(result) {
+  state.generated = result;
+  state.verifyVersion++;
+  state.verified = null;
+  $("#verification").hidden = true;
+  $("#verify-scope").innerHTML =
+    '<option value="store">目前店家與所選期間</option>';
+  const f = result.filter;
+  const direct = result.output_kind === "reports";
+  const features = result.analysis_mode === "features";
+  const title = direct
+    ? "特徵尋人・逐批分析"
+    : features
+      ? "特徵尋人・篩選留言"
+      : "完整篩選";
+  state.fullRun = {
+    session: result.session,
+    acode: result.acode,
+    name: result.store,
+    target: result.target,
+    start: result.start,
+    end: result.end,
+    current: f.current,
+    completed: f.completed,
+    total: f.total,
+    comment_limit: f.comment_limit,
+    analysis_mode: result.analysis_mode || "name",
+    feature_analysis: result.output_kind === "reports" ? "direct" : "filter",
+  };
+  try {
+    sessionStorage.setItem(FULL_RUN_KEY, JSON.stringify(state.fullRun));
+  } catch {
+    /* Progress still lives in memory. */
+  }
+  $("#prompt-result").innerHTML =
+    `<div class="result-heading"><h3>${title}・第 ${f.current + 1} / ${f.total} 批</h3><span class="badge">第一輪・已完成 ${f.completed} 批</span></div>
+    <progress class="full-progress" value="${f.completed}" max="${f.total}" aria-label="分批處理完成批次"></progress>
+    <div class="result-metrics"><span>全部 <strong>${number(f.total_comments)}</strong> 則</span><span>已閱讀主要留言 <strong>${number(f.reviewed_count)}</strong> 則</span><span>${direct ? "去重後引用證據" : "去重後確認"} <strong>${number(f.confirmed_count)}</strong> 則</span></div>
+    <p class="field-hint">${escapeHTML(result.period)}・每批最多 ${number(f.comment_limit)} 則留言（含補充脈絡）。</p>
+    <p class="field-hint">全部批次合計約 ${number(f.total_tokens.lower)}～${number(f.total_tokens.upper)} tokens，包含重複脈絡。這是 UTF-8 位元組粗估，實際用量可能超出範圍，不含對話歷史或模型回覆；每批建議使用新對話。</p>
+    <div class="full-batch-toolbar"><button class="button secondary" data-full-nav="${f.current - 1}">← 上一批</button><label class="sr-only" for="full-batch-select">選擇處理批次</label><select id="full-batch-select">${f.batches.map((batch) => `<option value="${batch.index}" ${batch.index === f.current ? "selected" : ""}>${escapeHTML(batchOptionLabel(batch, result))}</option>`).join("")}</select><button class="button secondary" data-full-nav="${f.current + 1}">下一批 →</button></div>
+    <div class="notice">本批：${number(f.primary_ids.length)} 則主要留言＋${number(f.context_ids.length)} 則補充脈絡・${number(result.characters)} 字元・約 ${number(result.tokens.lower)}～${number(result.tokens.upper)} tokens。</div>
+    <div class="result-actions"><button class="button primary" id="copy-prompt">複製本批提示詞 ↗</button><button class="button secondary" id="download-prompt">下載本批文字檔</button></div>
+    <details><summary>預覽本批完整提示詞</summary><pre class="prompt-preview" id="prompt-text"></pre></details>
+    ${result.notes.length > 1 ? `<p class="notice warning">${escapeHTML(result.notes.slice(1).join("\n"))}</p>` : ""}
+    <div class="refine-section"><h3>貼回第 ${f.current + 1} 批的${direct ? "暫時分析" : " ID 陣列"}</h3><p>${direct ? "貼上本批完整的候選人分析，具體說法需引用本批提供的 ID；沒有相關人選時請明說。" : "只接受本批實際提供的 ID。沒有相關留言時貼上 []，也需要確認此批。"}</p><label class="sr-only" for="filter-answer">本批模型回覆</label><textarea id="filter-answer" rows="4" maxlength="4000000" placeholder="${direct ? "貼上本批模型的完整分析與引用 ID…" : "貼上 ID 陣列；沒有相關留言填 []"}"></textarea>
+    <div class="result-actions"><button class="button primary" id="refine">${f.batches[f.current].complete ? "更新本批結果" : direct ? "儲存本批分析，繼續處理" : "確認本批，繼續處理"}</button><button class="text-button" id="full-discard">捨棄本批草稿</button><button class="text-button" data-full-nav="${f.current}">重新載入本批</button></div><div id="refine-error" class="notice warning" role="alert" hidden></div></div>
+    <p id="full-unsaved" class="notice warning" hidden>仍有未確認的回覆修改。請先確認各批結果，或捨棄草稿，再產生最後的整合或報告提示詞。</p>
+    ${f.all_done ? `<div class="notice">${direct ? "所有批次分析已收集，可以產生跨批整合提示詞，統整候選人、別名與矛盾。" : f.confirmed_count ? "所有批次已完成，可以產生第二輪報告提示詞。" : "所有批次已完成，但沒有確認相關留言。可回到各批修正結果，或調整日期與分析條件重新分析。"}</div>` : `<p class="field-hint">${direct ? "完成所有批次分析後，才會開放跨批整合提示詞。" : "完成所有批次後，才會開放產生第二輪報告提示詞。"}</p>`}
+    <button id="full-finalize" class="button primary">${direct ? "產生跨批整合提示詞 →" : features ? "產生候選人報告提示詞 →" : "產生第二輪報告提示詞 →"}</button>`;
+  $("#prompt-text").textContent = result.prompt;
+  $("#filter-answer").value =
+    state.fullDrafts.get(fullDraftKey(result)) ?? f.saved_answer;
+  $("#prompt-result").hidden = false;
+  updateFullControls();
+  updateFullResume();
+}
+async function fullNavigate(index) {
+  if (state.fullBusy || state.generated?.stage !== "full_filter") return;
+  captureFullDraft();
+  const session = state.generated.session;
+  const version = state.version;
+  const request = ++state.fullRequest;
+  state.fullBusy = true;
+  updateFullControls();
+  try {
+    const result = await api("/api/filter-batch", {
+      ...context(),
+      session,
+      batch_index: index,
+    });
+    if (
+      version === state.version &&
+      request === state.fullRequest &&
+      state.generated?.session === session
+    )
+      renderFullFilter(result);
+  } catch (error) {
+    if (
+      version === state.version &&
+      request === state.fullRequest &&
+      $("#refine-error")
+    )
+      showError("#refine-error", error);
+  } finally {
+    state.fullBusy = false;
+    updateFullControls();
+  }
+}
+async function submitFullBatch() {
+  if (state.fullBusy) return;
+  captureFullDraft();
+  const current = state.generated;
+  const submitted = $("#filter-answer").value;
+  const version = state.version;
+  const request = ++state.fullRequest;
+  state.fullBusy = true;
+  updateFullControls();
+  $("#refine-error").hidden = true;
+  try {
+    const result = await api("/api/refine", {
+      ...context(),
+      session: current.session,
+      answer: submitted,
+      batch_index: current.filter.current,
+      filter_revision: current.filter.revision,
+    });
+    if (state.fullDrafts.get(fullDraftKey(current)) === submitted)
+      state.fullDrafts.delete(fullDraftKey(current));
+    if (
+      version === state.version &&
+      request === state.fullRequest &&
+      state.generated?.session === current.session
+    ) {
+      renderFullFilter(result);
+    }
+  } catch (error) {
+    if (
+      version === state.version &&
+      request === state.fullRequest &&
+      $("#refine-error")
+    )
+      showError("#refine-error", error);
+  } finally {
+    state.fullBusy = false;
+    updateFullControls();
+  }
+}
+async function finalizeFullFilter() {
+  if (state.fullBusy || state.generated?.stage !== "full_filter") return;
+  captureFullDraft();
+  updateFullControls();
+  if (hasFullDrafts()) return;
+  const current = state.generated;
+  const version = state.version;
+  const request = ++state.fullRequest;
+  state.fullBusy = true;
+  updateFullControls();
+  try {
+    const result = await api("/api/filter-report", {
+      ...context(),
+      session: current.session,
+      filter_revision: current.filter.revision,
+    });
+    if (
+      version === state.version &&
+      request === state.fullRequest &&
+      state.generated?.session === current.session
+    )
+      renderPrompt(result);
+  } catch (error) {
+    if (
+      version === state.version &&
+      request === state.fullRequest &&
+      $("#refine-error")
+    )
+      showError("#refine-error", error);
+  } finally {
+    state.fullBusy = false;
+    updateFullControls();
+  }
+}
+async function resumeFullFilter() {
+  const run = state.fullRun;
+  if (!run) return;
+  const wanted = state.stores.find(
+    (store) => store.acode === run.acode && store.name === run.name,
+  );
+  if (!wanted) {
+    toast("找不到上次完整篩選的店家，請先載入店家資料。");
+    return;
+  }
+  chooseStore(wanted);
+  if (!sameStore(wanted, state.store)) return;
+  captureFullDraft();
+  state.version++;
+  const request = ++state.fullRequest;
+  const version = state.version;
+  $("#target").value = run.target;
+  $("#start").value = run.start;
+  $("#end").value = run.end;
+  const mode = run.analysis_mode === "features" ? "features" : "name";
+  $(`input[name="mode"][value="${mode}"]`).checked = true;
+  $("#feature-analysis").value = run.feature_analysis || "direct";
+  $("#two-step").checked = true;
+  $("#filter-strategy").value = "full";
+  $("#batch-comments").value = run.comment_limit ?? 200;
+  $("#advanced").open = true;
+  renderMode();
+  switchTab("analysis");
+  try {
+    const result = await api("/api/filter-batch", {
+      ...context(),
+      session: run.session,
+      batch_index: run.current,
+    });
+    if (version === state.version && request === state.fullRequest) {
+      renderFullFilter(result);
+      $("#prompt-result").scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }
+  } catch (error) {
+    if (version === state.version && request === state.fullRequest) {
+      showError("#analysis-error", error);
+      // Keep the resume handle on network errors; expired handles can be replaced
+      // by starting a new full filtering run.
+    }
+  }
+}
+
 function citationButton(citation, active = false) {
   return `<button class="citation-link ${citation.status}${active ? " active" : ""}" data-citation="${escapeHTML(citation.id)}" aria-label="${escapeHTML(citation.id)}，${statusLabels[citation.status]}">${escapeHTML(citation.id)}</button>`;
 }
@@ -925,10 +1262,14 @@ async function openTemplates() {
         ? "custom_spec.md"
         : mode === "name"
           ? $("#two-step").checked
-            ? "filter_spec.md"
+            ? $("#filter-strategy").value === "full"
+              ? "full_filter_spec.md"
+              : "filter_spec.md"
             : "report_spec.md"
           : mode === "features"
-            ? "features_spec.md"
+            ? $("#feature-analysis").value === "filter"
+              ? "features_filter_spec.md"
+              : "features_spec.md"
             : "roster_spec.md";
     renderTemplateEditor(name);
     $("#template-form").hidden = false;
@@ -1126,8 +1467,19 @@ $$('input[name="mode"]').forEach((input) =>
     invalidate();
   }),
 );
-["target", "start", "end", "depth", "two-step"].forEach((id) =>
+[
+  "target",
+  "start",
+  "end",
+  "depth",
+  "two-step",
+  "filter-strategy",
+  "feature-analysis",
+  "batch-comments",
+].forEach((id) =>
   $(`#${id}`).addEventListener("input", () => {
+    if (["two-step", "filter-strategy", "feature-analysis"].includes(id))
+      updateFilterOptions();
     if (id === "start" || id === "end") customDatesChanged();
     if (id === "start" || id === "end")
       $$("[data-period]").forEach((button) =>
@@ -1143,11 +1495,37 @@ $("#prompt-result").addEventListener("click", (event) => {
   if (button.id === "copy-prompt") copyPrompt();
   if (button.id === "download-prompt") downloadPrompt();
   if (button.id === "refine") refine();
+  if (button.dataset.fullNav !== undefined)
+    fullNavigate(Number(button.dataset.fullNav));
+  if (button.id === "full-finalize") finalizeFullFilter();
+  if (
+    button.id === "full-discard" &&
+    state.generated?.stage === "full_filter"
+  ) {
+    state.fullDrafts.delete(fullDraftKey());
+    $("#filter-answer").value = state.generated.filter.saved_answer;
+    updateFullControls();
+  }
   if (button.id === "go-verify") {
     switchTab("verify");
     $("#report").focus();
   }
 });
+$("#prompt-result").addEventListener("input", (event) => {
+  if (
+    event.target.id === "filter-answer" &&
+    state.generated?.stage === "full_filter"
+  ) {
+    captureFullDraft();
+    updateFullControls();
+  }
+});
+$("#prompt-result").addEventListener("change", (event) => {
+  if (event.target.id === "full-batch-select")
+    fullNavigate(Number(event.target.value));
+});
+$("#full-resume").addEventListener("click", resumeFullFilter);
+updateFullResume();
 $("#verify-form").addEventListener("submit", verify);
 $("#report").addEventListener("input", () => {
   state.verifyVersion++;

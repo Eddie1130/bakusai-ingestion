@@ -128,6 +128,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "無法讀取表單內容，請重新操作"})
             return
         routes = {
+            "/api/filter-batch": self.server.workspace.filter_batch,
+            "/api/filter-report": self.server.workspace.full_filter_report,
             "/api/custom-threads": services.custom_threads,
             "/api/custom-preview": self.server.workspace.custom_preview,
             "/api/custom-page": self.server.workspace.custom_page,

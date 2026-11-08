@@ -370,8 +370,11 @@
                   </p>
                 </section>
                 <details id="advanced">
-                  <summary>進階選項 <span>回覆脈絡與兩段式分析</span></summary>
-                  <div class="advanced-content">
+                  <summary>
+                    進階選項
+                    <span id="advanced-caption">回覆脈絡與兩段式分析</span>
+                  </summary>
+                  <div class="advanced-content" id="name-analysis-options">
                     <div class="field">
                       <label for="depth">回覆脈絡</label
                       ><select id="depth">
@@ -389,6 +392,58 @@
                       ></label
                     >
                   </div>
+                  <div id="feature-analysis-field" class="field" hidden>
+                    <label for="feature-analysis">分析方式</label>
+                    <select id="feature-analysis" disabled>
+                      <option value="direct">
+                        直接分析（預設）・各批輸出結論，再跨批整合
+                      </option>
+                      <option value="filter">
+                        先篩留言編號，再分析・合併證據後整理候選人
+                      </option>
+                    </select>
+                    <p class="field-hint" id="feature-analysis-hint">
+                      一批內可直接完成；超過一批會逐批收集暫時分析，最後再整合重複人選與矛盾。
+                    </p>
+                  </div>
+                  <section
+                    id="two-step-options"
+                    class="two-step-options"
+                    hidden
+                  >
+                    <div class="field" id="filter-strategy-field">
+                      <label for="filter-strategy">第一輪篩選方式</label>
+                      <select id="filter-strategy">
+                        <option value="quick">
+                          快速篩選（預設）・先比對名字，再排除誤判
+                        </option>
+                        <option value="full">
+                          完整篩選・全部期間內留言，依留言數量分批
+                        </option>
+                      </select>
+                      <p class="field-hint" id="filter-strategy-hint">
+                        提供名字比對及回覆脈絡挑出的候選留言，讓模型排除誤判。
+                      </p>
+                    </div>
+                    <div class="field" id="batch-size-field" hidden>
+                      <label for="batch-comments">每批留言數量上限</label>
+                      <input
+                        id="batch-comments"
+                        type="number"
+                        min="1"
+                        max="2000"
+                        step="1"
+                        value="200"
+                        disabled
+                      />
+                      <p class="field-hint">
+                        預設 200
+                        則，主要留言與補充脈絡合計不超過此數量，每則完整保留。
+                        留言較長時可減少上限；產生後會顯示字數與 tokens
+                        粗估供參考。這是第一輪每批上限；最後整合或報告可能包含更多證據，會另行顯示資料量。
+                      </p>
+                    </div>
+                  </section>
                 </details>
                 <div class="form-footer">
                   <p>
@@ -401,6 +456,14 @@
                 </div>
               </div>
             </form>
+            <button
+              id="full-resume"
+              class="button secondary full-resume"
+              type="button"
+              hidden
+            >
+              繼續完整篩選進度
+            </button>
             <div
               id="analysis-error"
               class="notice warning"

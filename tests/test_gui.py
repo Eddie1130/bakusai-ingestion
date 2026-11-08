@@ -155,7 +155,7 @@ class WorkspaceTests(unittest.TestCase):
         from analysis import prompt
 
         catalog = templates.catalog()
-        self.assertEqual(len(catalog["templates"]), 7)
+        self.assertEqual(len(catalog["templates"]), 10)
         self.assertEqual(catalog["max_characters"], 50_000)
         for item in catalog["templates"]:
             self.assertEqual(item["default"], prompt.load_template(item["name"]))
@@ -439,8 +439,55 @@ class HTTPTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         catalog = json.loads(body)
-        self.assertEqual(len(catalog["templates"]), 7)
+        self.assertEqual(len(catalog["templates"]), 10)
         self.assertIn("$girl", catalog["templates"][0]["default"])
+
+    def test_full_filter_http_round_trip_and_completion_gate(self):
+        ref = ThreadRef(3, 103, 1, "100", "測試店")
+        payload = store.merge(
+            None,
+            [(ref, [Comment(1, "2026/11/09 12:00", "未提名字的留言")])],
+            "測試店",
+            3,
+        )
+        store.save(paths.bakusai_path(3, "測試店"), payload)
+        headers = {
+            "X-Workspace-Token": self.server.token,
+            "Content-Type": "application/json",
+        }
+        data = {
+            "acode": 3,
+            "store": "測試店",
+            "mode": "name",
+            "target": "ナナ",
+            "two_step": True,
+            "filter_strategy": "full",
+        }
+
+        def post(route, values):
+            status, _, body = self.request("POST", route, json.dumps(values), headers)
+            return status, json.loads(body)
+
+        status, first = post("/api/generate", data)
+        self.assertEqual(status, 200)
+        session = {**data, "session": first["session"]}
+        self.assertEqual(post("/api/filter-report", session)[0], 400)
+        status, page = post("/api/filter-batch", {**session, "batch_index": 0})
+        self.assertEqual(status, 200)
+        self.assertEqual(page["filter"]["primary_ids"], ["T1-1"])
+        status, completed = post(
+            "/api/refine",
+            {**session, "batch_index": 0, "filter_revision": 0, "answer": '["T1-1"]'},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(completed["filter"]["all_done"])
+        status, report = post(
+            "/api/filter-report",
+            {**session, "filter_revision": completed["filter"]["revision"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(report["stage"], "report")
+        self.assertEqual(report["count"], 1)
 
     def test_api_requires_token_and_refuses_foreign_host_origin(self):
         headers = {"X-Workspace-Token": self.server.token}
