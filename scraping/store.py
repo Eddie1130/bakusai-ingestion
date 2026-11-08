@@ -87,12 +87,13 @@ def load(path: Path) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def save(path: Path, payload: dict, indent: int | None = None) -> Path:
+def save(path: Path, payload: dict, indent: int | None = 2) -> Path:
     """Write a store file atomically, creating its directory if needed.
 
-    Comment files are written without indentation. Nothing reads them by eye —
-    they feed later processing stages — and pretty-printing 2,855 comments costs
-    a third of the file for nothing. Use `jq .` when a human does need to look.
+    Files are indented so they can be read and diffed by eye. That costs roughly
+    a third of the file in whitespace on the largest stores, which is a price
+    worth paying for output a person actually opens; pass `indent=None` for a
+    compact write where size matters more than legibility.
 
     The write goes to a temporary file and is then renamed over the target, so a
     run interrupted mid-write leaves the previous file intact rather than a
@@ -128,8 +129,7 @@ def save_info(path: Path, payload: dict) -> Path:
             "last_comment": payload.get("last_comment"),
         },
     }
-    # Small, and the one file worth glancing at by eye — keep it readable.
-    return save(path, info, indent=2)
+    return save(path, info)
 
 
 def is_opening_post(comment: dict) -> bool:
