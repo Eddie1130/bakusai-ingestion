@@ -120,6 +120,13 @@ nobody selects 34,000 characters in a terminal. Where a mode reads something bac
 it comes off the clipboard — press Enter — or from a file path you type. Nothing
 you paste in is ever written into the project or the data tree.
 
+每次產生提示詞時，都會顯示完整文字的字元數與**預估輸入 tokens 範圍**，
+包含分析指令、留言、日期及引用 ID；兩段式的每一輪會分別計算。
+未指定目標模型，因此使用 UTF-8 位元組數 ÷ 4 至 ÷ 2 作離線粗估，
+不是模型 tokenizer 的精確計數，也不是保證上下限，實際用量可能超出此範圍。
+中日文會依 UTF-8 位元組長度處理，不會直接將所有字元數除以四。
+估算不含你在模型端的既有對話、系統指令及模型輸出，不能用來保證符合上下文容量或帳單用量。
+
 **Verify** is where the fabrication rate is reported: `0.0%` means no cited id was
 invented, **not** that the report is right about who it is about. **Two-step**
 applies the same check one stage earlier, to the model's id list, and tells you

@@ -19,7 +19,7 @@ from pathlib import Path
 import paths
 from scraping import store as store_file
 
-from . import attribution, citations, diagnose, honorifics, prompt, select, verification
+from . import attribution, citations, diagnose, honorifics, prompt, select, tokens, verification
 from .period import ALL_TIME, Period, parse_bound
 
 Ask = Callable[[str], str]
@@ -154,7 +154,10 @@ def deliver(text: str, copy: Copy = copy_to_clipboard) -> str:
         written = handle.name
 
     head = "  已複製到剪貼簿" if copy(text) else "  ⚠️ 無法寫入剪貼簿，請直接開啟下面的檔案"
-    return f"{head}\n  副本：{written}"
+    return (
+        f"  提示詞共 {len(text):,} 字元\n{tokens.estimate(text).describe()}\n"
+        f"{head}\n  副本：{written}"
+    )
 
 
 SINGLE_PASS = "single"
@@ -484,7 +487,6 @@ def analyse_discovery(
     return "\n".join([
         f"  時間範圍：{period.label}",
         f"  已納入 {len(selected)} / {len(store_file.comments_by_id(payload))} 則留言，未按名字或特徵字面預篩。",
-        f"  提示詞共 {len(text):,} 字元；請確認模型容量足以容納全文，勿截斷留言。",
         deliver(text, copy),
     ])
 
