@@ -1,10 +1,11 @@
 # bakusai-ingestion
 
-Scrape a store's discussion from [Bakusai](https://bakusai.com), then turn one
-girl's mentions into a prompt you paste into the model of your choice — and check
+Scrape a store's discussion from [Bakusai](https://bakusai.com), then analyse a
+named girl, search by features, or discover the store's roster using a prompt
+you paste into the model of your choice — and check
 every comment id the answer cites against the comments that were actually sent.
 
-從爆サイ抓取某家店的討論串，挑出與某位女生相關的留言，組成提示詞讓你貼給模型，
+從爆サイ抓取某家店的討論串，依名字、外貌特徵或全店女生整理，組成提示詞讓你貼給模型，
 再把模型引用的每一個留言 ID 拿回原始資料比對。
 
 Two commands, files on disk, no database, no API key.
@@ -17,9 +18,10 @@ Anonymous forum text is easy to summarise and hard to trust. A model handed a fe
 hundred Japanese comments will produce a fluent report and cite comment ids that
 were never in the input. This tool is built around that failure:
 
-- **Selection is closed-set string matching, not extraction.** You supply the
-  name. Nothing infers who a comment is about from scratch, because that is where
-  invented attributions come from.
+- **Named selection uses closed-set string matching.** Feature search and roster
+  discovery instead give the model all comments within the requested period and
+  ask for evidence-backed candidates, including unnamed people. These are forum
+  inferences, with uncertainty and possible duplicates, rather than a verified roster.
 - **Every citation is checked.** The answer you paste back is intersected with the
   ids that were actually in the prompt, and the fabrication rate is reported. A
   rate of 0.0% means no id was invented — not that the report is right.
@@ -66,20 +68,44 @@ Re-scrape a store already on disk, unattended:
 python -m scraping refresh <店名>
 ```
 
-### 2. Analyse one girl
+### 2. Choose an analysis target
 
 ```bash
 python -m analysis
 ```
 
-Interactive. Pick the region, then the store, then the mode. Two of the three
-modes go on to ask for the girl's name — as written on the store's own roster —
-and how far to follow reply chains (one hop by default).
+選擇地區與店家後，可選：
+
+| 分析目標 | 行為 |
+|---|---|
+| 1. 已知名字（預設） | 輸入源氏名，保留原本單次／兩段式分析 |
+| 2. 特徵尋人 | 輸入外貌、服裝、紋身等描述；模型從期間內全部留言整理可能人選、符合與矛盾之處 |
+| 3. 全店女生整理 | 模型整理具名及未具名人物、特徵、別名、在籍說法與留言證據；不確定是否同一人時保留疑問 |
+| 4. 驗證報告 | 核對任何模式產生的報告引用 |
+
+所有目標都會詢問開始與結束日期，**預設兩欄留空＝全部已爬取資料**。
+支援 `YYYY`、`YYYY-MM`、`YYYY-MM-DD`、`now`，以留言發表日期（店家當地時間）
+判斷，包含首尾日。例如：
+
+- `2025-08-30` 到 `now`：2025 年 8 月 30 日至今天。
+- `2023` 到 `2025`：2023 年 1 月 1 日至 2025 年 12 月 31 日。
+- 只填開始或結束：另一端不設限制。
+
+只要指定任一日期界線，日期不明的留言（包含無日期開串文）就會排除，
+回覆鏈也不能帶回區間外留言。驗證模式會把區間外或日期不明 ID 視為不在驗證範圍，
+不把它們直接宣稱為捏造。全部時間模式則保留無日期留言。
+
+特徵尋人與全店整理不會先做名字或字面關鍵字篩選，讓模型能比對中文描述與日文留言。
+這兩種模式各產生一份提示詞，顯示總字元數；資料量大時須確認模型能容納全文。
+結果只代表留言可支持的人物線索，不能保證找齊全店人員，也不能確認目前仍在職。
+沿用手動複製提示詞給 LLM 的流程，不會自動呼叫 API。
+
+已知名字的工作流程：
 
 | Mode | What it does | Prompts out / answers in |
 |---|---|---|
 | Single pass *(default)* | Builds one prompt over the selected evidence, and stops there | 1 / 0 |
-| Two-step | Asks the model first for the comment ids that are really about her, checks those ids against the store, then builds the report prompt over only those, re-expanded one hop for context | 2 / 1 |
+| Two-step | Asks the model first for the comment ids that are really about her, checks those ids against the comments actually sent, then builds the report prompt over only those, re-expanded one hop for context | 2 / 1 |
 | Verify | Takes a report you already have and checks every comment id it cites | 0 / 1 |
 
 Every prompt goes to your clipboard, and a copy is written to a temp file because
@@ -90,7 +116,8 @@ you paste in is ever written into the project or the data tree.
 **Verify** is where the fabrication rate is reported: `0.0%` means no cited id was
 invented, **not** that the report is right about who it is about. **Two-step**
 applies the same check one stage earlier, to the model's id list, and tells you
-which ids it had to drop.
+which ids it had to drop. IDs that exist in the store but were not in the first
+prompt are also dropped.
 
 ---
 

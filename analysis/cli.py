@@ -20,6 +20,7 @@ import paths
 from scraping import store as store_file
 
 from . import attribution, citations, diagnose, honorifics, prompt, select, verification
+from .period import ALL_TIME, Period, parse_bound
 
 Ask = Callable[[str], str]
 Copy = Callable[[str], bool]
@@ -228,7 +229,7 @@ def describe_dropped(found: citations.Citations) -> str:
         return ""
     listed = "、".join(found.unknown[:DROPPED_PREVIEW])
     more = f" 等 {len(found.unknown)} 個" if len(found.unknown) > DROPPED_PREVIEW else ""
-    return f"  ⚠️ 有 {len(found.unknown)} 個 ID 不存在於這家店，已捨棄：{listed}{more}"
+    return f"  ⚠️ 有 {len(found.unknown)} 個 ID 不在本輪允許的留言範圍，已捨棄：{listed}{more}"
 
 
 def describe_narrowing(
@@ -302,7 +303,7 @@ def _describe_selection(
 
 
 def _gather(
-    acode: int, store_name: str, girl: str, depth: int | None
+    acode: int, store_name: str, girl: str, depth: int | None, period: Period = ALL_TIME
 ) -> tuple[dict, tuple[select.Selected, ...]] | str:
     """The store and her comments, or the message explaining why there are none.
 
@@ -314,8 +315,11 @@ def _gather(
     payload = load_store(acode, store_name)
     if payload is None:
         return f"  「{store_name}」尚未抓取，請先執行抓取工具"
+    payload = period.apply(payload)
     selected = select.select(payload, girl, depth)
     if not selected:
+        if period != ALL_TIME:
+            return f"  所選期間（{period.label}）找不到與「{girl}」相關的留言"
         return diagnose.explain_empty(payload, girl)
     return payload, selected
 
@@ -326,9 +330,10 @@ def analyse_once(
     girl: str,
     copy: Copy = copy_to_clipboard,
     depth: int | None = select.DEFAULT_DEPTH,
+    period: Period = ALL_TIME,
 ) -> str:
     """Build one girl's prompt and return the message to show the operator."""
-    gathered = _gather(acode, store_name, girl, depth)
+    gathered = _gather(acode, store_name, girl, depth, period)
     if isinstance(gathered, str):
         return gathered
     payload, selected = gathered
@@ -336,7 +341,7 @@ def analyse_once(
     lines = [
         _describe_selection(selected, payload, girl),
         describe_honorifics(honorifics.honorific_rate(payload, girl)),
-        deliver(prompt.build(store_name, girl, selected), copy),
+        deliver(prompt.build(store_name, girl, selected, period=period), copy),
     ]
     return "\n".join(line for line in lines if line)
 
@@ -349,6 +354,7 @@ def analyse_two_step(
     copy: Copy = copy_to_clipboard,
     depth: int | None = select.DEFAULT_DEPTH,
     paste: Paste = read_clipboard,
+    period: Period = ALL_TIME,
 ) -> str:
     """Filter first, then report over what the model confirmed.
 
@@ -359,7 +365,7 @@ def analyse_two_step(
     Unlike its siblings this prints as it goes, because the operator has to see the
     first prompt land and act on it before there is anything to ask him for.
     """
-    gathered = _gather(acode, store_name, girl, depth)
+    gathered = _gather(acode, store_name, girl, depth, period)
     if isinstance(gathered, str):
         return gathered
     payload, selected = gathered
@@ -368,18 +374,22 @@ def analyse_two_step(
     print(_describe_selection(selected, payload, girl))
     if warning:
         print(warning)
-    print(deliver(prompt.build_filter(store_name, girl, selected), copy))
+    print(deliver(prompt.build_filter(store_name, girl, selected, period=period), copy))
 
     collected = collect("請複製模型回覆的留言 ID", ask, paste)
     if collected is None:
         return "  已取消"
 
-    found = citations.cited(payload, collected)
+    sent_ids = {item.comment_id for item in selected}
+    sent_payload = {"comments": [
+        item for key, item in store_file.comments_by_id(payload).items() if key in sent_ids
+    ]}
+    found = citations.cited(sent_payload, collected)
     read = f"  讀到 {len(collected)} 個字元、{found.total} 個 ID"
     if not found.known:
         return "\n".join(
             line
-            for line in [read, "  沒有讀到任何這家店的留言 ID，請確認複製的內容", describe_dropped(found)]
+            for line in [read, "  沒有讀到任何本輪送出的留言 ID，請確認複製的內容", describe_dropped(found)]
             if line
         )
 
@@ -389,13 +399,14 @@ def analyse_two_step(
         f"  模型確認 {len(found.known)} 則，展開回覆脈絡後共 {len(confirmed)} 則",
         describe_dropped(found),
         describe_narrowing(selected, confirmed),
-        deliver(prompt.build(store_name, girl, confirmed), copy),
+        deliver(prompt.build(store_name, girl, confirmed, period=period), copy),
     ]
     return "\n".join(line for line in lines if line)
 
 
 def verify_report(
-    acode: int, store_name: str, ask: Ask = input, paste: Paste = read_clipboard
+    acode: int, store_name: str, ask: Ask = input, paste: Paste = read_clipboard,
+    period: Period = ALL_TIME,
 ) -> str:
     """Check what a finished report cited, and print the comments so it can be read.
 
@@ -413,23 +424,85 @@ def verify_report(
     if collected is None:
         return "  已取消"
 
-    return verification.render(payload, collected)
+    return (f"  驗證範圍：{period.label}；區間外 ID 亦視為不在範圍\n"
+            + verification.render(period.apply(payload), collected, scoped=period != ALL_TIME))
+
+
+NAME = "name"
+FEATURES = "features"
+ROSTER = "roster"
+
+
+def prompt_target(ask: Ask = input) -> str | None:
+    while True:
+        raw = ask(
+            "分析目標（Enter=1 已知名字；2=按外貌／服裝／紋身等特徵尋人；"
+            "3=整理全店女生；4=驗證已完成的報告），q 離開："
+        ).strip().lower()
+        if raw in QUIT_COMMANDS:
+            return None
+        if raw in {"", "1", "2", "3", "4"}:
+            return {"": NAME, "1": NAME, "2": FEATURES, "3": ROSTER, "4": VERIFY}[raw]
+        print("  選項無效，請重新輸入")
+
+
+def prompt_period(ask: Ask = input) -> Period | None:
+    print("  時間以留言發表日期為準（店家當地時間），含首尾日。")
+    print("  格式：YYYY、YYYY-MM、YYYY-MM-DD、now；兩欄留空＝全部已爬取資料。")
+    print("  指定任一日期界線時，日期不明留言及區間外回覆一律排除。")
+    while True:
+        start = ask("開始日期（Enter=最早），q 離開：").strip()
+        if start.lower() in QUIT_COMMANDS:
+            return None
+        end = ask("結束日期（Enter=最新），q 離開：").strip()
+        if end.lower() in QUIT_COMMANDS:
+            return None
+        try:
+            return Period(parse_bound(start), parse_bound(end, end=True))
+        except (ValueError, OverflowError) as exc:
+            print(f"  日期無效：{exc}，請重新輸入")
+
+
+def analyse_discovery(
+    acode: int, store_name: str, *, features: str | None = None,
+    period: Period = ALL_TIME, copy: Copy = copy_to_clipboard,
+) -> str:
+    payload = load_store(acode, store_name)
+    if payload is None:
+        return f"  「{store_name}」尚未抓取，請先執行抓取工具"
+    scoped = period.apply(payload)
+    selected = select.all_comments(scoped)
+    if not selected:
+        return "  所選期間沒有可用留言，未產生提示詞"
+    by_id = store_file.comments_by_id(scoped)
+    thread_ids = {str(by_id[item.comment_id].get("thread_index")) for item in selected}
+    threads = [thread for thread in scoped.get("threads", [])
+               if str(thread.get("index")) in thread_ids]
+    text = prompt.build_discovery(
+        store_name, selected, features=features, period=period, threads=threads,
+    )
+    return "\n".join([
+        f"  時間範圍：{period.label}",
+        f"  已納入 {len(selected)} / {len(store_file.comments_by_id(payload))} 則留言，未按名字或特徵字面預篩。",
+        f"  提示詞共 {len(text):,} 字元；請確認模型容量足以容納全文，勿截斷留言。",
+        deliver(text, copy),
+    ])
 
 
 def _run_mode(
-    mode: str, acode: int, store_name: str, ask: Ask, copy: Copy, paste: Paste
+    mode: str, acode: int, store_name: str, ask: Ask, copy: Copy, paste: Paste,
+    period: Period = ALL_TIME,
 ) -> str | None:
-    """Drive one mode to completion. `None` means the operator quit."""
+    """Drive a name workflow or verification within the same strict period."""
     if mode == VERIFY:
-        return verify_report(acode, store_name, ask, paste)
-
+        return verify_report(acode, store_name, ask, paste, period)
     girl = prompt_girl(ask)
     if girl is None:
         return None
     depth = prompt_depth(ask)
     if mode == TWO_STEP:
-        return analyse_two_step(acode, store_name, girl, ask, copy, depth, paste)
-    return analyse_once(acode, store_name, girl, copy, depth)
+        return analyse_two_step(acode, store_name, girl, ask, copy, depth, paste, period)
+    return analyse_once(acode, store_name, girl, copy, depth, period)
 
 
 def main(
@@ -450,10 +523,31 @@ def main(
         store_name = prompt_store(names, ask)
         if store_name is None:
             break
-        mode = prompt_mode(ask)
-        if mode is None:
+        target = prompt_target(ask)
+        if target is None:
             break
-        message = _run_mode(mode, acode, store_name, ask, copy, paste)
+        period = prompt_period(ask)
+        if period is None:
+            break
+        if target == VERIFY:
+            message = verify_report(acode, store_name, ask, paste, period)
+        elif target == NAME:
+            mode = prompt_mode(ask)
+            if mode is None:
+                break
+            message = _run_mode(mode, acode, store_name, ask, copy, paste, period)
+        else:
+            features = None
+            if target == FEATURES:
+                while not features:
+                    features = ask("請描述外貌、服裝、紋身或任何特點，q 離開：").strip()
+                    if features.lower() in QUIT_COMMANDS:
+                        return 0
+                    if not features:
+                        print("  請至少輸入一項特徵")
+            message = analyse_discovery(
+                acode, store_name, features=features, period=period, copy=copy
+            )
         if message is None:
             break
         print(message)

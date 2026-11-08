@@ -14,6 +14,7 @@ from .select import (
     ROUTE_BOARD,
     ROUTE_CONFIRMED,
     ROUTE_NAME,
+    ROUTE_STORE,
     Selected,
 )
 
@@ -22,9 +23,11 @@ BOARD_MARK = "[本板]"
 OPENING_MARK = "[開串文]"
 CONFIRMED_MARK = "[確認]"
 CONTEXT_MARK = "[脈絡]"
+STORE_MARK = "[店內資料]"
 
 #: What each mark means, in the order a legend should list them.
 MARKS: dict[str, str] = {
+    STORE_MARK: "店家留言，尚未判定在描述誰；也可能與任何女生無關",
     DIRECT_MARK: "內文直接提到該名字（可能是片假名或伏字寫法）",
     BOARD_MARK: "來自她本人的專屬討論串，整串都在講她，內文不一定會寫出名字",
     OPENING_MARK: (
@@ -39,6 +42,7 @@ MARKS: dict[str, str] = {
 #: The two routes that mean the comment is here on its own account. Read last:
 #: context and confirmation say more about a comment than how it was first found.
 _MARKS_BY_ROUTE: dict[str, str] = {
+    ROUTE_STORE: STORE_MARK,
     ROUTE_NAME: DIRECT_MARK,
     ROUTE_BOARD: BOARD_MARK,
 }

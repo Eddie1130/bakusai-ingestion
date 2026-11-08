@@ -41,6 +41,7 @@ ROUTE_NAME = "name"
 ROUTE_BOARD = "board"
 ROUTE_REPLY = "reply"
 ROUTE_CONFIRMED = "confirmed"
+ROUTE_STORE = "store"
 
 #: Why the comment is in the selection at all, which is the only part of this a
 #: ranking layer has any business reading. Derived from the route rather than
@@ -434,6 +435,12 @@ def from_ids(
     return _emit(payload, by_id, _with_context(payload, origins, depth))
 
 
+def all_comments(payload: dict) -> tuple[Selected, ...]:
+    """Unattributed store evidence for feature search and roster discovery."""
+    by_id = comments_by_id(payload)
+    return _emit(payload, by_id, {key: Origin(ROUTE_STORE) for key in by_id})
+
+
 def _with_context(
     payload: dict, origins: dict[str, Origin], depth: int | None
 ) -> dict[str, Origin]:
@@ -458,9 +465,7 @@ def _emit(
 def date_span(selected: Sequence[Selected]) -> tuple[str, str] | None:
     """First and last date in the selection, or `None` when it carries no dates.
 
-    Stated in the prompt so the model knows what period it is reasoning over —
-    the sample is never filtered by date, because a girl who was ranked first in
-    March and drew complaints in May is answered by the change itself.
+    Describes the selected evidence after any requested date filter.
     """
     stamps = sorted(item.datetime for item in selected if item.datetime)
     return (stamps[0], stamps[-1]) if stamps else None
